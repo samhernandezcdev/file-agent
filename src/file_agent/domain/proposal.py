@@ -19,6 +19,14 @@ class FileCategory(str, Enum):
     VIDEO = "video"
     ARCHIVE = "archive"
     CODE = "code"
+    EXECUTABLE = "executable"
+    """A directly-launchable operational file (.exe, .msi, .dll, .bat, .cmd, ...) —
+    not defined strictly as "binary/compiled" (.bat/.cmd are text). The distinguishing
+    property is that the OS launches/loads it directly by name, unlike CODE (source/
+    scripts requiring an explicit interpreter). Exists to preserve a distinct signal
+    for a future policy layer (e.g. "never auto-move executables") — the domain and
+    classifier layers do not implement any such policy themselves.
+    """
     OTHER = "other"
     UNKNOWN = "unknown"
 
