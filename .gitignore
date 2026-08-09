@@ -35,6 +35,7 @@ Thumbs.db
 desktop.ini
 
 # Local runtime data
+local-data/
 *.db
 *.sqlite
 *.sqlite3
