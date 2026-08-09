@@ -16,7 +16,10 @@ def _make(tmp_path: Path, **overrides: object) -> FileProposal:
         "proposed_destination": tmp_path / "invoices" / "invoice-2026-01.pdf",
         "category": FileCategory.DOCUMENT,
         "confidence": 0.75,
+        "source_classification_confidence": 0.75,
+        "source_classifier_id": "rules-v1",
         "reasons": ["filename matches invoice pattern"],
+        "proposal_engine_id": "rules-v1",
     }
     defaults.update(overrides)
     return FileProposal(**defaults)

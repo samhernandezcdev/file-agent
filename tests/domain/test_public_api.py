@@ -5,6 +5,7 @@ from file_agent import domain
 
 def test_all_exports_are_importable() -> None:
     assert set(domain.__all__) == {
+        "DestinationCategory",
         "DiscoveredFile",
         "DomainEvent",
         "EntityType",

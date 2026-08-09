@@ -31,6 +31,24 @@ class FileCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
+class DestinationCategory(str, Enum):
+    """A logical organization destination — not a filesystem path, absolute
+    or relative. Resolving this into an actual location (organization root,
+    category folder, filename) is explicitly deferred to a future ticket;
+    this enum exists only to constrain proposals to a small, stable, typed
+    vocabulary instead of letting arbitrary strings ("Docs", "documents/",
+    ad-hoc casing) enter durable proposal records.
+    """
+
+    DOCUMENTS = "documents"
+    IMAGES = "images"
+    AUDIO = "audio"
+    VIDEO = "video"
+    ARCHIVES = "archives"
+    CODE = "code"
+    EXECUTABLES = "executables"
+
+
 class FileProposal(BaseModel):
     """A proposed rename/move for a discovered file, with the reasoning behind it.
 
@@ -50,10 +68,34 @@ class FileProposal(BaseModel):
     file_id: UUID
     proposed_name: str | None = Field(default=None, min_length=1)
     proposed_destination: Path | None = None
+    proposed_destination_category: DestinationCategory | None = None
+    """A logical destination key, or None if no destination can be proposed.
+    Deliberately distinct from ``proposed_destination`` (an absolute path,
+    reserved for a future organization-root-aware producer) — this field
+    represents organization *intent*, not a resolved filesystem location.
+    """
     category: FileCategory
+    """The classification category this proposal is based on (i.e. the
+    source ``ClassificationResult.category`` at proposal-generation time) —
+    not an independent proposal-specific taxonomy."""
     confidence: float = Field(ge=0.0, le=1.0)
+    """0.0 whenever no destination is proposed; otherwise equal to
+    ``source_classification_confidence``, carried forward as supporting
+    evidence. Not an independently computed probabilistic model — never
+    authorization to act (SAFETY.md rule 6: confidence != permission)."""
+    source_classification_confidence: float = Field(ge=0.0, le=1.0)
+    """The confidence of the ClassificationResult this proposal was built
+    from, preserved verbatim. May diverge from ``confidence`` above (e.g. a
+    confident OTHER classification with no destination mapping has
+    source_classification_confidence=1.0 but confidence=0.0)."""
+    source_classifier_id: str = Field(min_length=1)
+    """Which classifier produced the classification this proposal is based
+    on — structured provenance, not just prose in ``reasons``."""
     reasons: tuple[str, ...] = Field(default_factory=tuple, min_length=1)
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    proposal_engine_id: str = Field(min_length=1)
+    """Stable identifier for the proposal-engine rule set that produced this
+    proposal — mirrors the classifier's classifier_id."""
 
     _validate_created_at = field_validator("created_at")(normalize_to_utc)
 
