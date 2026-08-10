@@ -19,6 +19,7 @@ class EventType(str, Enum):
     FILE_HASHED = "file_hashed"
     FILE_CLASSIFIED = "file_classified"
     PROPOSAL_CREATED = "proposal_created"
+    POLICY_EVALUATED = "policy_evaluated"
 
 
 class EntityType(str, Enum):
@@ -26,6 +27,7 @@ class EntityType(str, Enum):
 
     FILE = "file"
     PROPOSAL = "proposal"
+    POLICY_DECISION = "policy_decision"
     SCAN = "scan"
 
 

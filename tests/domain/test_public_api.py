@@ -12,6 +12,8 @@ def test_all_exports_are_importable() -> None:
         "EventType",
         "FileCategory",
         "FileProposal",
+        "PolicyDecision",
+        "PolicyOutcome",
         "ScanRun",
         "ScanStatus",
     }
