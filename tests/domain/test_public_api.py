@@ -14,8 +14,13 @@ def test_all_exports_are_importable() -> None:
         "FileProposal",
         "PolicyDecision",
         "PolicyOutcome",
+        "RejectionCode",
         "ScanRun",
         "ScanStatus",
+        "TransactionOperation",
+        "TransactionRequest",
+        "TransactionResult",
+        "TransactionStatus",
     }
     for name in domain.__all__:
         assert hasattr(domain, name)

@@ -20,6 +20,10 @@ class EventType(str, Enum):
     FILE_CLASSIFIED = "file_classified"
     PROPOSAL_CREATED = "proposal_created"
     POLICY_EVALUATED = "policy_evaluated"
+    TRANSACTION_REQUESTED = "transaction_requested"
+    TRANSACTION_SUCCEEDED = "transaction_succeeded"
+    TRANSACTION_REJECTED = "transaction_rejected"
+    TRANSACTION_FAILED = "transaction_failed"
 
 
 class EntityType(str, Enum):
@@ -28,6 +32,7 @@ class EntityType(str, Enum):
     FILE = "file"
     PROPOSAL = "proposal"
     POLICY_DECISION = "policy_decision"
+    TRANSACTION = "transaction"
     SCAN = "scan"
 
 

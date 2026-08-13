@@ -10,6 +10,13 @@ from file_agent.domain.file import DiscoveredFile
 from file_agent.domain.policy import PolicyDecision, PolicyOutcome
 from file_agent.domain.proposal import DestinationCategory, FileCategory, FileProposal
 from file_agent.domain.scan import ScanRun, ScanStatus
+from file_agent.domain.transaction import (
+    RejectionCode,
+    TransactionOperation,
+    TransactionRequest,
+    TransactionResult,
+    TransactionStatus,
+)
 
 __all__ = [
     "DestinationCategory",
@@ -21,6 +28,11 @@ __all__ = [
     "FileProposal",
     "PolicyDecision",
     "PolicyOutcome",
+    "RejectionCode",
     "ScanRun",
     "ScanStatus",
+    "TransactionOperation",
+    "TransactionRequest",
+    "TransactionResult",
+    "TransactionStatus",
 ]
