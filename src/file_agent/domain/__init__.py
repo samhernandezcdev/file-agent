@@ -7,6 +7,11 @@ TransactionEngine are separate layers built on top of these types.
 
 from file_agent.domain.events import DomainEvent, EntityType, EventType
 from file_agent.domain.file import DiscoveredFile
+from file_agent.domain.human_review import (
+    HumanReviewDecision,
+    HumanReviewOutcome,
+    ReviewSource,
+)
 from file_agent.domain.policy import PolicyDecision, PolicyOutcome
 from file_agent.domain.proposal import DestinationCategory, FileCategory, FileProposal
 from file_agent.domain.scan import ScanRun, ScanStatus
@@ -26,9 +31,12 @@ __all__ = [
     "EventType",
     "FileCategory",
     "FileProposal",
+    "HumanReviewDecision",
+    "HumanReviewOutcome",
     "PolicyDecision",
     "PolicyOutcome",
     "RejectionCode",
+    "ReviewSource",
     "ScanRun",
     "ScanStatus",
     "TransactionOperation",

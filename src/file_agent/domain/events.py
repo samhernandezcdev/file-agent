@@ -24,6 +24,7 @@ class EventType(str, Enum):
     TRANSACTION_SUCCEEDED = "transaction_succeeded"
     TRANSACTION_REJECTED = "transaction_rejected"
     TRANSACTION_FAILED = "transaction_failed"
+    HUMAN_REVIEW_RECORDED = "human_review_recorded"
 
 
 class EntityType(str, Enum):
@@ -33,6 +34,7 @@ class EntityType(str, Enum):
     PROPOSAL = "proposal"
     POLICY_DECISION = "policy_decision"
     TRANSACTION = "transaction"
+    HUMAN_REVIEW = "human_review"
     SCAN = "scan"
 
 
