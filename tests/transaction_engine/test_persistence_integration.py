@@ -3,14 +3,15 @@ API with zero changes to file_agent.persistence."""
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
 from file_agent.domain import (
     EntityType,
     EventType,
+    ExecutionAuthorization,
     PolicyDecision,
-    PolicyOutcome,
     TransactionRequest,
     TransactionResult,
 )
@@ -48,10 +49,14 @@ def test_rejected_transaction_persists_one_event_with_full_lineage(
 ) -> None:
     source = make_source_file("run.bat", content=b"echo hi")
     request = make_request(source, content=b"echo hi")
-    policy_decision = make_policy_decision(request, decision=PolicyOutcome.REVIEW)
+    # A policy decision for a DIFFERENT policy_decision_id can never
+    # legitimately authorize this request -- forces a REJECTED outcome
+    # deterministically, without touching the filesystem.
+    policy_decision = make_policy_decision(request, id=uuid4())
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
     assert isinstance(outcome, TransactionResult)
     store.record_event(transaction_result_event(outcome))
 
@@ -69,7 +74,7 @@ def test_rejected_transaction_persists_one_event_with_full_lineage(
     assert payload["destination_category"] == request.destination_category.value
     assert payload["expected_sha256"] == request.expected_sha256
     assert payload["expected_size"] == request.expected_size
-    assert payload["rejection_code"] == "policy_review"
+    assert payload["rejection_code"] == "authorization_linkage_mismatch"
     assert payload["transaction_engine_id"] == "v1"
 
 
@@ -83,9 +88,10 @@ def test_successful_transaction_persists_requested_then_succeeded(
     source = make_source_file("report.txt", content=b"hello world")
     request = make_request(source, content=b"hello world")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    prepared = engine.prepare(request, policy_decision)
+    prepared = engine.prepare(request, authorization)
     assert not isinstance(prepared, TransactionResult)
     store.record_event(transaction_requested_event(request))
     result = engine.commit(prepared)
@@ -112,7 +118,7 @@ def test_repeated_evaluation_of_same_request_appends_history(
     make_request: Callable[..., TransactionRequest],
     make_policy_decision: Callable[..., PolicyDecision],
 ) -> None:
-    """A second prepare() against a REVIEW policy decision (i.e. never
+    """A second prepare() against a mismatched authorization (i.e. never
     reaching commit()) for a DIFFERENT request still appends independently
     -- distinct request ids produce distinct, non-overwriting event
     histories."""
@@ -120,12 +126,14 @@ def test_repeated_evaluation_of_same_request_appends_history(
     source_b = make_source_file("b.bat", content=b"b")
     request_a = make_request(source_a, content=b"a")
     request_b = make_request(source_b, content=b"b")
-    policy_a = make_policy_decision(request_a, decision=PolicyOutcome.REVIEW)
-    policy_b = make_policy_decision(request_b, decision=PolicyOutcome.REVIEW)
+    policy_a = make_policy_decision(request_a, id=uuid4())
+    policy_b = make_policy_decision(request_b, id=uuid4())
+    authorization_a = ExecutionAuthorization.from_policy_auto(policy_a)
+    authorization_b = ExecutionAuthorization.from_policy_auto(policy_b)
 
     engine = TransactionEngine(sandbox_root)
-    outcome_a = engine.prepare(request_a, policy_a)
-    outcome_b = engine.prepare(request_b, policy_b)
+    outcome_a = engine.prepare(request_a, authorization_a)
+    outcome_b = engine.prepare(request_b, authorization_b)
     assert isinstance(outcome_a, TransactionResult)
     assert isinstance(outcome_b, TransactionResult)
     store.record_event(transaction_result_event(outcome_a))

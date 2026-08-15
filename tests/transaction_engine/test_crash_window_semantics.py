@@ -15,6 +15,7 @@ import pytest
 from file_agent.domain import (
     EntityType,
     EventType,
+    ExecutionAuthorization,
     PolicyDecision,
     TransactionRequest,
     TransactionResult,
@@ -49,9 +50,10 @@ def test_prepare_alone_never_mutates_the_filesystem(
     source = make_source_file("report.txt")
     request = make_request(source)
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    prepared = engine.prepare(request, policy_decision)
+    prepared = engine.prepare(request, authorization)
 
     assert not isinstance(prepared, TransactionResult)
     assert source.exists()
@@ -74,9 +76,10 @@ def test_crash_after_commit_before_terminal_persist_leaves_orphaned_requested(
     source = make_source_file("report.txt", content=b"hello world")
     request = make_request(source, content=b"hello world")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    prepared = engine.prepare(request, policy_decision)
+    prepared = engine.prepare(request, authorization)
     assert not isinstance(prepared, TransactionResult)
     store.record_event(transaction_requested_event(request))
 

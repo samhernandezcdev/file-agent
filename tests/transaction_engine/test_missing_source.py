@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from file_agent.domain import (
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -22,11 +23,12 @@ def test_missing_source_is_rejected(
     source = make_source_file("report.txt")
     request = make_request(source)
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     source.unlink()
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.SOURCE_NOT_FOUND

@@ -24,6 +24,7 @@ def make_discovered_file() -> Callable[..., DiscoveredFile]:
             "size_bytes": 10,
             "created_at": now,
             "modified_at": now,
+            "sha256": "a" * 64,
         }
         defaults.update(overrides)
         return DiscoveredFile(**defaults)
@@ -42,6 +43,7 @@ def make_proposal() -> Callable[..., FileProposal]:
     """
 
     def _make(**overrides: object) -> FileProposal:
+        now = datetime.now(UTC)
         defaults: dict[str, object] = {
             "file_id": uuid4(),
             "proposed_name": None,
@@ -52,8 +54,12 @@ def make_proposal() -> Callable[..., FileProposal]:
             "source_classification_confidence": 1.0,
             "source_classifier_id": "rules-v1",
             "reasons": ("stub reason",),
-            "created_at": datetime.now(UTC),
+            "created_at": now,
             "proposal_engine_id": "rules-v1",
+            "expected_size": 10,
+            "expected_created_at": now,
+            "expected_modified_at": now,
+            "sha256": "a" * 64,
         }
         defaults.update(overrides)
         return FileProposal(**defaults)

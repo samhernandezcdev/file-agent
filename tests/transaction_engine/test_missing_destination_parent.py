@@ -5,6 +5,7 @@ from pathlib import Path
 
 from file_agent.domain import (
     DestinationCategory,
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -24,9 +25,10 @@ def test_missing_configured_directory_is_rejected_not_created(
     source = make_source_file("report.txt")
     request = make_request(source, destination_category=DestinationCategory.DOCUMENTS)
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.DESTINATION_PARENT_MISSING

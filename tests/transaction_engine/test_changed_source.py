@@ -5,6 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from file_agent.domain import (
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -23,13 +24,14 @@ def test_content_modified_after_authorization_is_rejected(
     source = make_source_file("report.txt", content=b"original content")
     request = make_request(source, content=b"original content")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     # simulate the file changing between observation/proposal/policy and
     # transaction execution
     source.write_bytes(b"tampered content, different size")
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.SOURCE_IDENTITY_CHANGED
@@ -49,9 +51,10 @@ def test_hash_mismatch_with_identical_metadata_is_rejected(
     source = make_source_file("report.txt", content=b"actual content")
     request = make_request(source, content=b"a different content entirely")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.SOURCE_HASH_MISMATCH

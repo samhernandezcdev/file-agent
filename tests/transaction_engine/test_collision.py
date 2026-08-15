@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from file_agent.domain import (
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -23,9 +24,10 @@ def test_existing_destination_file_is_rejected_and_neither_side_modified(
     request = make_request(source, content=b"source content")
     request.destination_path.write_bytes(b"existing destination content")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.DESTINATION_ALREADY_EXISTS

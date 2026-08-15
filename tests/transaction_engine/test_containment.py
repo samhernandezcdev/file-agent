@@ -5,6 +5,7 @@ from pathlib import Path
 
 from file_agent.domain import (
     DestinationCategory,
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -30,9 +31,10 @@ def test_destination_outside_sandbox_is_rejected(
         destination_path=outside,
     )
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     # A destination outside the sandbox never matches the configured
@@ -56,9 +58,10 @@ def test_source_outside_sandbox_is_rejected(
     outside_source.write_bytes(b"hello world")
     request = make_request(outside_source, content=b"hello world")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.SOURCE_IDENTITY_CHANGED

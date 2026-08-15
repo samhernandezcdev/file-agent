@@ -433,6 +433,7 @@ def vault_capture_result_event(result: VaultCaptureResult) -> DomainEvent:
             "verified_sha256": result.verified_sha256,
             "verified_size": result.verified_size,
             "vault_object_path": result.vault_object_path,
+            "evaluated_at": result.evaluated_at.isoformat(),
             "started_at": result.started_at.isoformat()
             if result.started_at is not None
             else None,

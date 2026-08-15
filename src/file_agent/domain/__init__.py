@@ -5,6 +5,10 @@ docs/SAFETY.md. Scanning, classification, persistence, and the future
 TransactionEngine are separate layers built on top of these types.
 """
 
+from file_agent.domain.authorization import (
+    ExecutionAuthorization,
+    ExecutionAuthorizationKind,
+)
 from file_agent.domain.events import DomainEvent, EntityType, EventType
 from file_agent.domain.file import DiscoveredFile
 from file_agent.domain.human_review import (
@@ -48,6 +52,8 @@ __all__ = [
     "DomainEvent",
     "EntityType",
     "EventType",
+    "ExecutionAuthorization",
+    "ExecutionAuthorizationKind",
     "FileCategory",
     "FileProposal",
     "HumanReviewDecision",

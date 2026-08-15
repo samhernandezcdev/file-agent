@@ -1,5 +1,6 @@
 """TransactionEngine — the sole boundary through which a managed user file
-may be moved. See docs/SAFETY.md and the FA-008 design plan.
+may be moved. See docs/SAFETY.md, the FA-008 design plan, and FA-012's
+ExecutionAuthorization correction (file_agent.domain.authorization).
 
 Two-method shape (prepare()/commit()), not one execute(): the crash-window
 analysis in the design plan requires a durable TRANSACTION_REQUESTED
@@ -20,7 +21,7 @@ from file_agent.domain import (
     DomainEvent,
     EntityType,
     EventType,
-    PolicyDecision,
+    ExecutionAuthorization,
     RejectionCode,
     TransactionRequest,
     TransactionResult,
@@ -32,12 +33,11 @@ from file_agent.transaction_engine.errors import InvalidPreparedMoveError
 from file_agent.transaction_engine.preconditions import (
     check_authorization_linkage,
     check_basename_preserved,
-    check_destination_category_matches_policy,
+    check_destination_category_matches_authorization,
     check_destination_category_physical_path,
     check_destination_collision,
     check_destination_containment,
     check_destination_parent_exists,
-    check_policy_is_auto,
     check_source_not_destination,
     verify_source_identity,
 )
@@ -90,7 +90,7 @@ class TransactionEngine:
         # commit() calls racing on the same token.
 
     def prepare(
-        self, request: TransactionRequest, policy_decision: PolicyDecision
+        self, request: TransactionRequest, authorization: ExecutionAuthorization
     ) -> "_PreparedMove | TransactionResult":
         """Runs every precondition in order. Returns a REJECTED
         TransactionResult if anything fails -- registering nothing in
@@ -98,13 +98,32 @@ class TransactionEngine:
         a committable capability. On success, mints a fresh token, records
         (request, verified_sha256, evaluated_at) keyed by it, and returns
         the opaque capability. Never mutates the filesystem.
+
+        authorization is expected to be a genuine ExecutionAuthorization,
+        built via ExecutionAuthorization.from_policy_auto/from_human_approval
+        by the trusted caller (FileAgentApplicationService) -- this engine
+        never inspects a PolicyDecision or HumanReviewDecision itself, and
+        never re-decides whether execution is allowed. It only performs
+        MECHANICAL authorization/request lineage checking: does
+        authorization's policy_decision_id/proposal_id/file_id/
+        destination_category match this request's? A MISMATCHED
+        authorization (wrong lineage for this request) is rejected here
+        (AUTHORIZATION_LINKAGE_MISMATCH / DESTINATION_CATEGORY_MISMATCH). A
+        forged-but-internally-consistent authorization -- correct shape,
+        matching lineage, but never actually derived from a genuinely
+        persisted PolicyDecision/HumanReviewDecision -- is outside this
+        engine's threat boundary; verifying that persisted-authenticity
+        question is FileAgentApplicationService's responsibility, not this
+        engine's. See file_agent.domain.authorization's module docstring
+        for the full trust-boundary statement.
         """
         evaluated_at = self._clock()
 
         precondition_checks: tuple[Callable[[], RejectionCode | None], ...] = (
-            lambda: check_authorization_linkage(request, policy_decision),
-            lambda: check_policy_is_auto(policy_decision),
-            lambda: check_destination_category_matches_policy(request, policy_decision),
+            lambda: check_authorization_linkage(request, authorization),
+            lambda: check_destination_category_matches_authorization(
+                request, authorization
+            ),
             lambda: check_source_not_destination(request),
             lambda: check_basename_preserved(request),
             lambda: check_destination_category_physical_path(
@@ -284,6 +303,7 @@ def transaction_result_event(result: TransactionResult) -> DomainEvent:
             ),
             "failure_reason": result.failure_reason,
             "verified_sha256": result.verified_sha256,
+            "evaluated_at": result.evaluated_at.isoformat(),
             "started_at": result.started_at.isoformat()
             if result.started_at is not None
             else None,

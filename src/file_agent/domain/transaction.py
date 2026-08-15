@@ -42,8 +42,6 @@ class RejectionCode(str, Enum):
     """Why a transaction was REJECTED -- structured, not just prose."""
 
     AUTHORIZATION_LINKAGE_MISMATCH = "authorization_linkage_mismatch"
-    POLICY_REVIEW = "policy_review"
-    POLICY_BLOCK = "policy_block"
     DESTINATION_CATEGORY_MISMATCH = "destination_category_mismatch"
     DESTINATION_CATEGORY_PATH_MISMATCH = "destination_category_path_mismatch"
     SOURCE_EQUALS_DESTINATION = "source_equals_destination"

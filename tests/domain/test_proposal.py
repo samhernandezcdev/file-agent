@@ -1,5 +1,6 @@
 """Tests for FileProposal."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -8,8 +9,11 @@ from pydantic import ValidationError
 
 from file_agent.domain import FileCategory, FileProposal
 
+_SHA = "a" * 64
+
 
 def _make(tmp_path: Path, **overrides: object) -> FileProposal:
+    now = datetime.now(UTC)
     defaults: dict[str, object] = {
         "file_id": uuid4(),
         "proposed_name": "invoice-2026-01.pdf",
@@ -20,6 +24,10 @@ def _make(tmp_path: Path, **overrides: object) -> FileProposal:
         "source_classifier_id": "rules-v1",
         "reasons": ["filename matches invoice pattern"],
         "proposal_engine_id": "rules-v1",
+        "expected_size": 10,
+        "expected_created_at": now,
+        "expected_modified_at": now,
+        "sha256": _SHA,
     }
     defaults.update(overrides)
     return FileProposal(**defaults)
@@ -88,6 +96,19 @@ def test_empty_string_name_still_rejected(tmp_path: Path) -> None:
 def test_unknown_field_rejected(tmp_path: Path) -> None:
     with pytest.raises(ValidationError):
         _make(tmp_path, bogus_field="nope")
+
+
+def test_invalid_sha256_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError):
+        _make(tmp_path, sha256="not-a-hash")
+
+
+def test_identity_snapshot_fields_present(tmp_path: Path) -> None:
+    proposal = _make(tmp_path)
+    assert proposal.sha256 == _SHA
+    assert proposal.expected_size == 10
+    assert proposal.expected_created_at.tzinfo is UTC
+    assert proposal.expected_modified_at.tzinfo is UTC
 
 
 # --- M1: reasons is a tuple, not a mutable list --------------------------------

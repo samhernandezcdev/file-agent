@@ -6,6 +6,7 @@ from pathlib import Path
 
 from file_agent.domain import (
     DestinationCategory,
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -29,9 +30,10 @@ def test_differing_basename_is_rejected(
         destination_path=renamed_destination,
     )
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.BASENAME_MISMATCH

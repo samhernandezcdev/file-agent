@@ -4,6 +4,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from file_agent.domain import (
+    ExecutionAuthorization,
     PolicyDecision,
     TransactionRequest,
     TransactionResult,
@@ -19,15 +20,17 @@ def test_successful_move_relocates_file_and_preserves_content(
     make_request: Callable[..., TransactionRequest],
     make_policy_decision: Callable[..., PolicyDecision],
     prepare_and_commit: Callable[
-        [TransactionEngine, TransactionRequest, PolicyDecision], TransactionResult
+        [TransactionEngine, TransactionRequest, ExecutionAuthorization],
+        TransactionResult,
     ],
 ) -> None:
     source = make_source_file("report.txt", content=b"hello world")
     request = make_request(source, content=b"hello world")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    result = prepare_and_commit(engine, request, policy_decision)
+    result = prepare_and_commit(engine, request, authorization)
 
     assert result.status is TransactionStatus.SUCCEEDED
     assert result.verified_sha256 == request.expected_sha256

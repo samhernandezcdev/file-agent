@@ -11,6 +11,8 @@ def test_all_exports_are_importable() -> None:
         "DomainEvent",
         "EntityType",
         "EventType",
+        "ExecutionAuthorization",
+        "ExecutionAuthorizationKind",
         "FileCategory",
         "FileProposal",
         "HumanReviewDecision",

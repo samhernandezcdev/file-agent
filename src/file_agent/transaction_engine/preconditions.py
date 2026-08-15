@@ -11,8 +11,7 @@ import os
 
 from file_agent.domain import (
     DiscoveredFile,
-    PolicyDecision,
-    PolicyOutcome,
+    ExecutionAuthorization,
     RejectionCode,
     TransactionRequest,
 )
@@ -28,29 +27,27 @@ from file_agent.transaction_engine.rules import (
 
 
 def check_authorization_linkage(
-    request: TransactionRequest, policy_decision: PolicyDecision
+    request: TransactionRequest, authorization: ExecutionAuthorization
 ) -> RejectionCode | None:
+    """authorization can only ever have been produced by
+    ExecutionAuthorization.from_policy_auto/from_human_approval, each of
+    which independently reverified the exact rule it embodies -- this check
+    exists solely to catch a MISMATCHED authorization (one built for a
+    different policy_decision/proposal/file than this specific request
+    references), not to re-decide whether execution is allowed at all."""
     if (
-        policy_decision.id != request.policy_decision_id
-        or policy_decision.proposal_id != request.proposal_id
-        or policy_decision.file_id != request.file_id
+        authorization.policy_decision_id != request.policy_decision_id
+        or authorization.proposal_id != request.proposal_id
+        or authorization.file_id != request.file_id
     ):
         return RejectionCode.AUTHORIZATION_LINKAGE_MISMATCH
     return None
 
 
-def check_policy_is_auto(policy_decision: PolicyDecision) -> RejectionCode | None:
-    if policy_decision.decision is PolicyOutcome.REVIEW:
-        return RejectionCode.POLICY_REVIEW
-    if policy_decision.decision is PolicyOutcome.BLOCK:
-        return RejectionCode.POLICY_BLOCK
-    return None
-
-
-def check_destination_category_matches_policy(
-    request: TransactionRequest, policy_decision: PolicyDecision
+def check_destination_category_matches_authorization(
+    request: TransactionRequest, authorization: ExecutionAuthorization
 ) -> RejectionCode | None:
-    if request.destination_category != policy_decision.destination_category:
+    if request.destination_category != authorization.destination_category:
         return RejectionCode.DESTINATION_CATEGORY_MISMATCH
     return None
 

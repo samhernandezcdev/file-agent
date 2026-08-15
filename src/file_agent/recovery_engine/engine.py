@@ -504,6 +504,7 @@ def recovery_result_event(result: RecoveryResult) -> DomainEvent:
             ),
             "failure_reason": result.failure_reason,
             "verified_sha256": result.verified_sha256,
+            "evaluated_at": result.evaluated_at.isoformat(),
             "started_at": result.started_at.isoformat()
             if result.started_at is not None
             else None,

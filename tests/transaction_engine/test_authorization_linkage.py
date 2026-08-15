@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 
 from file_agent.domain import (
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -37,9 +38,10 @@ def test_mismatched_linkage_field_is_rejected(
     else:
         overrides["file_id"] = uuid4()
     policy_decision = make_policy_decision(request, **overrides)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.AUTHORIZATION_LINKAGE_MISMATCH

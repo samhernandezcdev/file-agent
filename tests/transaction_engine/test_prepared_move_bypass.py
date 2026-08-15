@@ -12,8 +12,8 @@ from uuid import uuid4
 import pytest
 
 from file_agent.domain import (
+    ExecutionAuthorization,
     PolicyDecision,
-    PolicyOutcome,
     TransactionRequest,
     TransactionResult,
     TransactionStatus,
@@ -41,10 +41,11 @@ def test_prepared_move_from_another_engine_instance_cannot_commit(
     source = make_source_file("report.txt")
     request = make_request(source)
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine_a = TransactionEngine(sandbox_root)
     engine_b = TransactionEngine(sandbox_root)
-    prepared = engine_a.prepare(request, policy_decision)
+    prepared = engine_a.prepare(request, authorization)
     assert not isinstance(prepared, TransactionResult)
 
     with pytest.raises(InvalidPreparedMoveError):
@@ -64,9 +65,10 @@ def test_same_prepared_move_cannot_commit_twice(
     source = make_source_file("report.txt")
     request = make_request(source)
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    prepared = engine.prepare(request, policy_decision)
+    prepared = engine.prepare(request, authorization)
     assert not isinstance(prepared, TransactionResult)
 
     first = engine.commit(prepared)
@@ -84,10 +86,15 @@ def test_rejected_prepare_never_produces_a_committable_capability(
 ) -> None:
     source = make_source_file("report.txt")
     request = make_request(source)
-    policy_decision = make_policy_decision(request, decision=PolicyOutcome.REVIEW)
+    # A policy decision for a DIFFERENT policy_decision_id can never
+    # legitimately authorize this request -- forces a REJECTED outcome
+    # deterministically, without depending on TransactionEngine inspecting
+    # PolicyDecision.decision itself (it no longer does).
+    policy_decision = make_policy_decision(request, id=uuid4())
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert not isinstance(outcome, _PreparedMove)
@@ -110,9 +117,10 @@ def test_commit_ignores_caller_controlled_state_and_uses_only_the_registry(
     source = make_source_file("report.txt", content=b"hello world")
     request = make_request(source, content=b"hello world")
     policy_decision = make_policy_decision(request)
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    prepared = engine.prepare(request, policy_decision)
+    prepared = engine.prepare(request, authorization)
     assert not isinstance(prepared, TransactionResult)
 
     copied_token_capability = _PreparedMove(_token=prepared._token)

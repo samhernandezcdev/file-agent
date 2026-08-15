@@ -20,7 +20,13 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from file_agent.domain import DiscoveredFile, DomainEvent, EntityType, ScanRun
+from file_agent.domain import (
+    DiscoveredFile,
+    DomainEvent,
+    EntityType,
+    EventType,
+    ScanRun,
+)
 from file_agent.hasher import HashSuccess
 from file_agent.persistence import mapping, repositories
 from file_agent.persistence.errors import (
@@ -156,6 +162,18 @@ class FileAgentStore:
             rows = repositories.select_events_for_entity(
                 session, entity_type.value, entity_id
             )
+            return tuple(mapping.row_to_event(row) for row in rows)
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(str(exc)) from exc
+        finally:
+            session.close()
+
+    def list_events_by_type(self, event_type: EventType) -> tuple[DomainEvent, ...]:
+        """Ordered by (timestamp ASC, id ASC), across all entities. See
+        repositories.select_events_by_type for why this exists."""
+        session = self._session_factory()
+        try:
+            rows = repositories.select_events_by_type(session, event_type.value)
             return tuple(mapping.row_to_event(row) for row in rows)
         except OperationalError as exc:
             raise DatabaseUnavailableError(str(exc)) from exc

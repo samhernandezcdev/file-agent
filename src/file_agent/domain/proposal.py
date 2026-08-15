@@ -97,7 +97,26 @@ class FileProposal(BaseModel):
     """Stable identifier for the proposal-engine rule set that produced this
     proposal — mirrors the classifier's classifier_id."""
 
+    expected_size: int = Field(ge=0)
+    expected_created_at: datetime
+    expected_modified_at: datetime
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    """A frozen snapshot of the identity this proposal was built from --
+    copied from the ClassificationResult's DiscoveredFile at proposal-
+    creation time (FA-012). This is what lets a caller unambiguously bind a
+    later action to the EXACT analysis generation this proposal represents,
+    rather than reading whatever a shared, mutable DiscoveredFile row
+    currently holds -- a file_id can be re-analyzed (re-hashed, re-classified,
+    re-proposed) more than once, and each generation is a distinct
+    FileProposal with its own id and its own frozen snapshot here."""
+
     _validate_created_at = field_validator("created_at")(normalize_to_utc)
+    _validate_expected_created_at = field_validator("expected_created_at")(
+        normalize_to_utc
+    )
+    _validate_expected_modified_at = field_validator("expected_modified_at")(
+        normalize_to_utc
+    )
 
     @field_validator("proposed_destination")
     @classmethod

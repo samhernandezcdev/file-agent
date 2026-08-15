@@ -37,6 +37,14 @@ class ProposalEngine:
         self._clock = clock
 
     def propose(self, classification: ClassificationResult) -> FileProposal:
+        discovered = classification.discovered_file
+        if discovered.sha256 is None:
+            raise ValueError(
+                "FileProposal requires a hashed DiscoveredFile -- "
+                "classification.discovered_file.sha256 is None. Hash before "
+                "classifying/proposing; this is a caller sequencing error, "
+                "not a per-file business outcome."
+            )
         destination = DESTINATION_FOR_CATEGORY.get(classification.category)
         classification_reason = (
             f"classification: category={classification.category.value}, "
@@ -57,7 +65,7 @@ class ProposalEngine:
             confidence = classification.confidence
 
         return FileProposal(
-            file_id=classification.discovered_file.id,
+            file_id=discovered.id,
             proposed_name=None,
             proposed_destination=None,
             proposed_destination_category=destination,
@@ -68,6 +76,10 @@ class ProposalEngine:
             reasons=(classification_reason, mapping_reason),
             created_at=self._clock(),
             proposal_engine_id=PROPOSAL_ENGINE_ID,
+            expected_size=discovered.size_bytes,
+            expected_created_at=discovered.created_at,
+            expected_modified_at=discovered.modified_at,
+            sha256=discovered.sha256,
         )
 
 
@@ -102,5 +114,9 @@ def proposal_event(proposal: FileProposal) -> DomainEvent:
             "source_classifier_id": proposal.source_classifier_id,
             "reasons": list(proposal.reasons),
             "proposal_engine_id": proposal.proposal_engine_id,
+            "expected_size": proposal.expected_size,
+            "expected_created_at": proposal.expected_created_at.isoformat(),
+            "expected_modified_at": proposal.expected_modified_at.isoformat(),
+            "sha256": proposal.sha256,
         },
     )

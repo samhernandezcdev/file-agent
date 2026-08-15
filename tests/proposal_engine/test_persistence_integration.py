@@ -38,6 +38,7 @@ def make_discovered_file() -> Callable[..., DiscoveredFile]:
             "size_bytes": 10,
             "created_at": now,
             "modified_at": now,
+            "sha256": "a" * 64,
         }
         defaults.update(overrides)
         return DiscoveredFile(**defaults)

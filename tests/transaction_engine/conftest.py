@@ -16,6 +16,7 @@ import pytest
 
 from file_agent.domain import (
     DestinationCategory,
+    ExecutionAuthorization,
     FileCategory,
     PolicyDecision,
     PolicyOutcome,
@@ -111,8 +112,22 @@ def make_policy_decision() -> Callable[..., PolicyDecision]:
 
 
 @pytest.fixture
+def make_authorization() -> Callable[[PolicyDecision], ExecutionAuthorization]:
+    """AUTO-only convenience wrapper -- most transaction_engine tests only
+    care about the precondition chain downstream of a genuine authorization,
+    not about which of the two authorization kinds produced it. Tests that
+    specifically exercise HUMAN_APPROVED build it directly via
+    ExecutionAuthorization.from_human_approval."""
+
+    def _make(policy_decision: PolicyDecision) -> ExecutionAuthorization:
+        return ExecutionAuthorization.from_policy_auto(policy_decision)
+
+    return _make
+
+
+@pytest.fixture
 def prepare_and_commit() -> Callable[
-    [TransactionEngine, TransactionRequest, PolicyDecision], TransactionResult
+    [TransactionEngine, TransactionRequest, ExecutionAuthorization], TransactionResult
 ]:
     """Runs prepare() then commit(), asserting prepare() actually succeeded
     (returned something other than a REJECTED TransactionResult) --
@@ -122,9 +137,9 @@ def prepare_and_commit() -> Callable[
     def _run(
         engine: TransactionEngine,
         request: TransactionRequest,
-        policy_decision: PolicyDecision,
+        authorization: ExecutionAuthorization,
     ) -> TransactionResult:
-        prepared = engine.prepare(request, policy_decision)
+        prepared = engine.prepare(request, authorization)
         assert not isinstance(prepared, TransactionResult), (
             f"expected prepare() to succeed, got REJECTED: {prepared}"
         )

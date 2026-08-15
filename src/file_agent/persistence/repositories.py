@@ -138,3 +138,20 @@ def select_events_for_entity(
         .order_by(DomainEventRow.timestamp.asc(), DomainEventRow.id.asc())
     )
     return session.execute(stmt).scalars().all()
+
+
+def select_events_by_type(
+    session: Session, event_type: str
+) -> Sequence[DomainEventRow]:
+    """SQL-level filter by event_type alone, across all entities -- added for
+    FA-012: HUMAN_REVIEW_RECORDED events are keyed by the review's own id,
+    never by policy_decision_id, so finding "the review(s) for this
+    PolicyDecision" requires scanning by type and filtering payload
+    client-side (see application/queries.py); there is no entity_id to look
+    up directly the way select_events_for_entity assumes."""
+    stmt = (
+        select(DomainEventRow)
+        .where(DomainEventRow.event_type == event_type)
+        .order_by(DomainEventRow.timestamp.asc(), DomainEventRow.id.asc())
+    )
+    return session.execute(stmt).scalars().all()

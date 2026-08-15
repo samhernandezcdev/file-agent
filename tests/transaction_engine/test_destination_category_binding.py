@@ -11,6 +11,7 @@ from pathlib import Path
 
 from file_agent.domain import (
     DestinationCategory,
+    ExecutionAuthorization,
     PolicyDecision,
     RejectionCode,
     TransactionRequest,
@@ -32,9 +33,10 @@ def test_destination_category_mismatch_is_rejected(
     policy_decision = make_policy_decision(
         request, destination_category=DestinationCategory.IMAGES
     )
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.DESTINATION_CATEGORY_MISMATCH
@@ -60,9 +62,10 @@ def test_documents_pointed_at_executables_folder_is_rejected(
     policy_decision = make_policy_decision(
         request, destination_category=DestinationCategory.DOCUMENTS
     )
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.DESTINATION_CATEGORY_PATH_MISMATCH
@@ -88,9 +91,10 @@ def test_documents_pointed_at_arbitrary_folder_is_rejected(
     policy_decision = make_policy_decision(
         request, destination_category=DestinationCategory.DOCUMENTS
     )
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert isinstance(outcome, TransactionResult)
     assert outcome.rejection_code is RejectionCode.DESTINATION_CATEGORY_PATH_MISMATCH
@@ -107,8 +111,9 @@ def test_matching_category_and_configured_directory_proceeds(
     policy_decision = make_policy_decision(
         request, destination_category=DestinationCategory.DOCUMENTS
     )
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
 
     engine = TransactionEngine(sandbox_root)
-    outcome = engine.prepare(request, policy_decision)
+    outcome = engine.prepare(request, authorization)
 
     assert not isinstance(outcome, TransactionResult)
