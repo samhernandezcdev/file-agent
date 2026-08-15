@@ -28,6 +28,10 @@ class EventType(str, Enum):
     VAULT_CAPTURE_REQUESTED = "vault_capture_requested"
     VAULT_CAPTURE_SUCCEEDED = "vault_capture_succeeded"
     VAULT_CAPTURE_FAILED = "vault_capture_failed"
+    RECOVERY_REQUESTED = "recovery_requested"
+    RECOVERY_SUCCEEDED = "recovery_succeeded"
+    RECOVERY_REJECTED = "recovery_rejected"
+    RECOVERY_FAILED = "recovery_failed"
 
 
 class EntityType(str, Enum):
@@ -40,6 +44,7 @@ class EntityType(str, Enum):
     HUMAN_REVIEW = "human_review"
     SCAN = "scan"
     VAULT_CAPTURE = "vault_capture"
+    RECOVERY = "recovery"
 
 
 class DomainEvent(BaseModel):

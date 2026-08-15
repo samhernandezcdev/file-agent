@@ -14,6 +14,17 @@ from file_agent.domain.human_review import (
 )
 from file_agent.domain.policy import PolicyDecision, PolicyOutcome
 from file_agent.domain.proposal import DestinationCategory, FileCategory, FileProposal
+from file_agent.domain.recovery import (
+    CompletedMoveEvidence,
+    RecoveryOperation,
+    RecoveryRejectionCode,
+    RecoveryRequest,
+    RecoveryResult,
+    RecoveryStatus,
+    RestoreFromVaultRequest,
+    ReverseMoveRequest,
+    VaultCaptureEvidence,
+)
 from file_agent.domain.scan import ScanRun, ScanStatus
 from file_agent.domain.transaction import (
     RejectionCode,
@@ -31,6 +42,7 @@ from file_agent.domain.vault import (
 )
 
 __all__ = [
+    "CompletedMoveEvidence",
     "DestinationCategory",
     "DiscoveredFile",
     "DomainEvent",
@@ -42,7 +54,14 @@ __all__ = [
     "HumanReviewOutcome",
     "PolicyDecision",
     "PolicyOutcome",
+    "RecoveryOperation",
+    "RecoveryRejectionCode",
+    "RecoveryRequest",
+    "RecoveryResult",
+    "RecoveryStatus",
     "RejectionCode",
+    "RestoreFromVaultRequest",
+    "ReverseMoveRequest",
     "ReviewSource",
     "ScanRun",
     "ScanStatus",
@@ -50,6 +69,7 @@ __all__ = [
     "TransactionRequest",
     "TransactionResult",
     "TransactionStatus",
+    "VaultCaptureEvidence",
     "VaultCaptureRequest",
     "VaultCaptureResult",
     "VaultCaptureStatus",

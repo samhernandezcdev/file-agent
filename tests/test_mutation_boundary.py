@@ -1,19 +1,25 @@
 """Repo-wide guardrail: no filesystem-mutation primitive may appear anywhere
-in src/file_agent/ except transaction_engine/operations.py (the sole
-approved mutation call site), persistence/, and vault_engine/ -- the latter
-two each have their own dedicated, stricter local guardrail already proving
-their allow-listed mutation call sites are correctly scoped (see
-tests/persistence/test_app_data_boundary.py and
+in src/file_agent/ except managed_fs/operations.py (the sole approved
+managed-root mutation call site, shared by TransactionEngine and
+RecoveryEngine -- see file_agent.managed_fs), persistence/, and
+vault_engine/ -- the latter two each have their own dedicated, stricter
+local guardrail already proving their allow-listed mutation call sites are
+correctly scoped (see tests/persistence/test_app_data_boundary.py and
 tests/vault_engine/test_vault_boundary.py; excluded here to avoid two
 guardrails disagreeing about the same allow-listed call).
 
 This is the architectural enforcement of docs/SAFETY.md's core Milestone-2
-invariant: "All managed-file filesystem mutation must go through
-TransactionEngine." vault_engine's own writes are entirely confined to
-FileAgent's app-owned Vault directory tree and never touch a managed/sandbox
-path -- see its local guardrail -- so excluding it here does not weaken
-transaction_engine/operations.py's exclusive authority over managed-file
-mutation.
+invariant: "All managed-file filesystem mutation must go through one narrow,
+audited boundary." persistence's and vault_engine's own writes are entirely
+confined to FileAgent's app-owned storage (the SQLite file; the Vault
+directory tree) and never touch a managed/sandbox path -- see their local
+guardrails -- so excluding them here does not weaken managed_fs/operations.py's
+exclusive authority over managed-ROOT mutation. Neither transaction_engine
+nor recovery_engine has any mutation call site of its own: both call
+managed_fs's functions as bare function calls (ast.Name, not ast.Attribute),
+which this scan does not even need to special-case -- see managed_fs's own
+package-local guardrail for the "no open(..., 'wb')" check specific to that
+one file.
 """
 
 import ast
@@ -52,7 +58,7 @@ FORBIDDEN_METHOD_NAMES = {
 }
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "file_agent"
-APPROVED_MUTATION_FILE = SRC_ROOT / "transaction_engine" / "operations.py"
+APPROVED_MUTATION_FILE = SRC_ROOT / "managed_fs" / "operations.py"
 EXCLUDED_DIRS = {SRC_ROOT / "persistence", SRC_ROOT / "vault_engine"}
 
 
@@ -88,7 +94,7 @@ def _is_excluded(path: Path) -> bool:
     )
 
 
-def test_no_source_file_outside_transaction_engine_mutates_the_filesystem() -> None:
+def test_no_source_file_outside_managed_fs_mutates_the_filesystem() -> None:
     source_files = sorted(SRC_ROOT.rglob("*.py"))
     assert source_files, f"expected source files under {SRC_ROOT}"
 

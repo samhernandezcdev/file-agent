@@ -5,6 +5,7 @@ from file_agent import domain
 
 def test_all_exports_are_importable() -> None:
     assert set(domain.__all__) == {
+        "CompletedMoveEvidence",
         "DestinationCategory",
         "DiscoveredFile",
         "DomainEvent",
@@ -16,7 +17,14 @@ def test_all_exports_are_importable() -> None:
         "HumanReviewOutcome",
         "PolicyDecision",
         "PolicyOutcome",
+        "RecoveryOperation",
+        "RecoveryRejectionCode",
+        "RecoveryRequest",
+        "RecoveryResult",
+        "RecoveryStatus",
         "RejectionCode",
+        "RestoreFromVaultRequest",
+        "ReverseMoveRequest",
         "ReviewSource",
         "ScanRun",
         "ScanStatus",
@@ -24,6 +32,7 @@ def test_all_exports_are_importable() -> None:
         "TransactionRequest",
         "TransactionResult",
         "TransactionStatus",
+        "VaultCaptureEvidence",
         "VaultCaptureRequest",
         "VaultCaptureResult",
         "VaultCaptureStatus",

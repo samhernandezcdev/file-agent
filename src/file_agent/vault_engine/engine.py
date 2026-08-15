@@ -30,6 +30,12 @@ from file_agent.domain import (
 from file_agent.hasher import FileHasher, HashFailure, HashIssueType
 from file_agent.persistence import AppPaths
 from file_agent.scanner import SandboxRoot
+from file_agent.vault_engine.lookup import (
+    VaultLookupStatus,
+    VerifiedVaultObject,
+    rehash_vault_object,
+    verify_vault_object,
+)
 from file_agent.vault_engine.paths import (
     new_temp_path,
     object_abs_path,
@@ -37,10 +43,6 @@ from file_agent.vault_engine.paths import (
     object_relative_path,
 )
 from file_agent.vault_engine.rules import VAULT_ENGINE_ID
-from file_agent.vault_engine.safety import (
-    find_unsafe_vault_reparse_point,
-    is_unsafe_reparse_point,
-)
 from file_agent.vault_engine.storage import ensure_vault_layout
 
 _CHUNK_SIZE = 1024 * 1024  # 1 MiB
@@ -52,18 +54,6 @@ def _utc_now() -> datetime:
 
 class _SourceChangedDuringCapture(Exception):
     """Internal control-flow signal only -- never escapes capture()."""
-
-
-def _rehash_vault_object(path: Path) -> str:
-    """Independently rehashes an EXISTING Vault object's own bytes. Not via
-    FileHasher -- FileHasher is scoped to a SandboxRoot and would reject a
-    vault path as outside the sandbox by design; this is a small, separate,
-    read-only helper over a vault-owned path."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        while chunk := handle.read(_CHUNK_SIZE):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _best_effort_unlink(path: Path) -> None:
@@ -140,30 +130,32 @@ class VaultEngine:
             )
         verified_sha = request.expected_sha256
 
-        # Step 2.5: Vault-tree safety precondition -- before any read or
-        # write under vault_root, including the idempotency pre-check below.
-        if find_unsafe_vault_reparse_point(self._app_paths) is not None:
+        # Vault-tree safety + idempotency pre-check, consolidated into the
+        # one shared, safety-checked lookup (vault_engine.lookup.
+        # verify_vault_object -- also used by RecoveryEngine's
+        # RESTORE_FROM_VAULT, "one definition of a trusted Vault object
+        # shared by capture and restore"). Safety is checked before any
+        # read/write under vault_root; the rehash here is an optimization
+        # for the idempotent-hit case, not the source of the no-overwrite
+        # guarantee for a fresh publish -- that comes from the publish
+        # step's atomic, non-overwriting rename below.
+        lookup = verify_vault_object(self._app_paths, verified_sha)
+        if isinstance(lookup, VerifiedVaultObject):
+            started_at = self._clock()
+            return self._already_present(
+                request,
+                lookup.sha256,
+                lookup.size_bytes,
+                evaluated_at,
+                started_at,
+                self._clock(),
+            )
+        if lookup.status is VaultLookupStatus.UNSAFE:
             return self._rejected(
                 request, VaultRejectionCode.VAULT_STORAGE_UNSAFE, evaluated_at
             )
-
-        final_path = object_abs_path(self._app_paths, verified_sha)
-        prefix_dir = object_prefix_dir(self._app_paths, verified_sha)
-
-        # Idempotency pre-check -- optimization only; the actual no-overwrite
-        # guarantee comes from the publish step's atomic, non-overwriting
-        # rename below, not from this check.
-        if final_path.exists():
+        if lookup.status is VaultLookupStatus.CORRUPTED:
             started_at = self._clock()
-            if _rehash_vault_object(final_path) == verified_sha:
-                return self._already_present(
-                    request,
-                    verified_sha,
-                    final_path.stat().st_size,
-                    evaluated_at,
-                    started_at,
-                    self._clock(),
-                )
             return self._rejected(
                 request,
                 VaultRejectionCode.EXISTING_VAULT_OBJECT_CORRUPTED,
@@ -171,18 +163,10 @@ class VaultEngine:
                 started_at=started_at,
                 completed_at=self._clock(),
             )
+        # lookup.status is NOT_FOUND -- proceed to copy.
 
-        # Per-SHA prefix-directory safety, checked immediately before use --
-        # this fan-out directory is not covered by find_unsafe_vault_
-        # reparse_point's top-level sweep since it is specific to this one
-        # digest. A point-in-time check only; see safety.py's module
-        # docstring for the accepted residual TOCTOU. No exception is raised
-        # here (unlike bootstrap) -- this is a per-request environmental
-        # precondition on an already-valid engine, reported as REJECTED.
-        if prefix_dir.exists() and is_unsafe_reparse_point(prefix_dir):
-            return self._rejected(
-                request, VaultRejectionCode.VAULT_STORAGE_UNSAFE, evaluated_at
-            )
+        final_path = object_abs_path(self._app_paths, verified_sha)
+        prefix_dir = object_prefix_dir(self._app_paths, verified_sha)
 
         # Steps 3+4: stream + hash while copying into app-owned temp storage.
         prefix_dir.mkdir(parents=True, exist_ok=True)
@@ -242,7 +226,7 @@ class VaultEngine:
         try:
             temp_path.rename(final_path)
         except FileExistsError:
-            rehash = _rehash_vault_object(final_path)
+            rehash = rehash_vault_object(final_path)
             _best_effort_unlink(temp_path)
             if rehash == verified_digest:
                 return self._already_present(

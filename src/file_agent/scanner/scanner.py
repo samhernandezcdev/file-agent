@@ -25,6 +25,7 @@ from file_agent.domain import (
     ScanRun,
     ScanStatus,
 )
+from file_agent.reserved_artifacts import is_file_agent_internal_artifact
 from file_agent.scanner._paths import file_times_from_stat, resolve_reference_target
 from file_agent.scanner.issues import ScanIssue, ScanIssueSeverity, ScanIssueType
 from file_agent.scanner.result import ScanResult
@@ -135,6 +136,14 @@ class DirectoryScanner:
         events: list[DomainEvent],
         issues: list[ScanIssue],
     ) -> None:
+        # FileAgent-owned internal artifacts (e.g. RecoveryEngine's reserved
+        # restore-temp namespace) are invisible to organization scanning --
+        # checked first, using only the already-available entry.name, before
+        # any stat/symlink/junction/content I/O. Not user content, so no
+        # DiscoveredFile, no FILE_DISCOVERED event, no ScanIssue either --
+        # it is fully skipped, not modeled as UNKNOWN/OTHER/REVIEW/BLOCK.
+        if is_file_agent_internal_artifact(entry.name):
+            return
         entry_path = Path(entry.path)
         try:
             if entry.is_symlink():

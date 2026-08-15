@@ -26,9 +26,9 @@ from file_agent.domain import (
     TransactionResult,
     TransactionStatus,
 )
+from file_agent.managed_fs import move_no_replace
 from file_agent.scanner import SandboxRoot
 from file_agent.transaction_engine.errors import InvalidPreparedMoveError
-from file_agent.transaction_engine.operations import move
 from file_agent.transaction_engine.preconditions import (
     check_authorization_linkage,
     check_basename_preserved,
@@ -145,7 +145,7 @@ class TransactionEngine:
         request, verified_sha256, evaluated_at = entry
         started_at = self._clock()
         try:
-            move(request.source_path, request.destination_path)
+            move_no_replace(request.source_path, request.destination_path)
         except OSError as exc:
             return self._terminal(
                 request,
