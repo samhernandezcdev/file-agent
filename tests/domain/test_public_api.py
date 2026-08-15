@@ -24,6 +24,11 @@ def test_all_exports_are_importable() -> None:
         "TransactionRequest",
         "TransactionResult",
         "TransactionStatus",
+        "VaultCaptureRequest",
+        "VaultCaptureResult",
+        "VaultCaptureStatus",
+        "VaultObject",
+        "VaultRejectionCode",
     }
     for name in domain.__all__:
         assert hasattr(domain, name)

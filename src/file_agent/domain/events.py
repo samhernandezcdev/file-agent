@@ -25,6 +25,9 @@ class EventType(str, Enum):
     TRANSACTION_REJECTED = "transaction_rejected"
     TRANSACTION_FAILED = "transaction_failed"
     HUMAN_REVIEW_RECORDED = "human_review_recorded"
+    VAULT_CAPTURE_REQUESTED = "vault_capture_requested"
+    VAULT_CAPTURE_SUCCEEDED = "vault_capture_succeeded"
+    VAULT_CAPTURE_FAILED = "vault_capture_failed"
 
 
 class EntityType(str, Enum):
@@ -36,6 +39,7 @@ class EntityType(str, Enum):
     TRANSACTION = "transaction"
     HUMAN_REVIEW = "human_review"
     SCAN = "scan"
+    VAULT_CAPTURE = "vault_capture"
 
 
 class DomainEvent(BaseModel):

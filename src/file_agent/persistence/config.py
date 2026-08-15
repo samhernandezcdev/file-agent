@@ -8,23 +8,33 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DATABASE_FILENAME = "file-agent.sqlite3"
+VAULT_DIRNAME = "vault"
 
 
 @dataclass(frozen=True, slots=True)
 class AppPaths:
-    """A validated application-data root and its derived database path.
+    """A validated application-data root and its derived database/vault paths.
 
     ``from_root`` is the only constructor. ``database_path`` is always
-    ``root / "file-agent.sqlite3"`` — there is no way to independently
-    configure an arbitrary database path that could point outside the
-    authorized root.
+    ``root / "file-agent.sqlite3"`` and ``vault_root`` is always
+    ``root / "vault"`` — there is no way to independently configure an
+    arbitrary database or vault path that could point outside the authorized
+    root. This class only validates that ``root`` is absolute; it has no
+    knowledge of any managed/sandbox root, so it cannot by itself guarantee
+    disjointness from one -- that is file_agent.vault_engine's responsibility
+    (see VaultEngine's constructor-time ensure_disjoint_roots check).
     """
 
     root: Path
     database_path: Path
+    vault_root: Path
 
     @classmethod
     def from_root(cls, root: Path) -> "AppPaths":
         if not root.is_absolute():
             raise ValueError(f"application-data root must be absolute, got: {root!r}")
-        return cls(root=root, database_path=root / DATABASE_FILENAME)
+        return cls(
+            root=root,
+            database_path=root / DATABASE_FILENAME,
+            vault_root=root / VAULT_DIRNAME,
+        )

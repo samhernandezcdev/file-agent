@@ -1,13 +1,19 @@
 """Repo-wide guardrail: no filesystem-mutation primitive may appear anywhere
 in src/file_agent/ except transaction_engine/operations.py (the sole
-approved mutation call site) and persistence/ (which has its own dedicated,
-stricter guardrail already proving its one allow-listed mkdir is correctly
-scoped -- see tests/persistence/test_app_data_boundary.py; excluded here to
-avoid two guardrails disagreeing about the same allow-listed call).
+approved mutation call site), persistence/, and vault_engine/ -- the latter
+two each have their own dedicated, stricter local guardrail already proving
+their allow-listed mutation call sites are correctly scoped (see
+tests/persistence/test_app_data_boundary.py and
+tests/vault_engine/test_vault_boundary.py; excluded here to avoid two
+guardrails disagreeing about the same allow-listed call).
 
 This is the architectural enforcement of docs/SAFETY.md's core Milestone-2
 invariant: "All managed-file filesystem mutation must go through
-TransactionEngine."
+TransactionEngine." vault_engine's own writes are entirely confined to
+FileAgent's app-owned Vault directory tree and never touch a managed/sandbox
+path -- see its local guardrail -- so excluding it here does not weaken
+transaction_engine/operations.py's exclusive authority over managed-file
+mutation.
 """
 
 import ast
@@ -47,7 +53,7 @@ FORBIDDEN_METHOD_NAMES = {
 
 SRC_ROOT = Path(__file__).resolve().parents[1] / "src" / "file_agent"
 APPROVED_MUTATION_FILE = SRC_ROOT / "transaction_engine" / "operations.py"
-EXCLUDED_DIRS = {SRC_ROOT / "persistence"}
+EXCLUDED_DIRS = {SRC_ROOT / "persistence", SRC_ROOT / "vault_engine"}
 
 
 def _dotted_name(node: ast.expr) -> str | None:

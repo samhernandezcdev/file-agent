@@ -22,6 +22,13 @@ from file_agent.domain.transaction import (
     TransactionResult,
     TransactionStatus,
 )
+from file_agent.domain.vault import (
+    VaultCaptureRequest,
+    VaultCaptureResult,
+    VaultCaptureStatus,
+    VaultObject,
+    VaultRejectionCode,
+)
 
 __all__ = [
     "DestinationCategory",
@@ -43,4 +50,9 @@ __all__ = [
     "TransactionRequest",
     "TransactionResult",
     "TransactionStatus",
+    "VaultCaptureRequest",
+    "VaultCaptureResult",
+    "VaultCaptureStatus",
+    "VaultObject",
+    "VaultRejectionCode",
 ]
