@@ -52,6 +52,9 @@ local-data/
 sandbox/*
 !sandbox/.gitkeep
 
+# Demo utility scratch directory (scripts/demo_preview.py)
+.demo/
+
 # Future local vault / quarantine data
 vault/
 00_Revisar/

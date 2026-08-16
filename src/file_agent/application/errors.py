@@ -1,14 +1,18 @@
 """Errors raised by the Application Service itself.
 
 FA-012 introduced exactly one new exception type (TerminalPersistenceError).
-FA-013 introduces exactly one more (DuplicatePolicyDecisionIdError). Every
-other exception a caller might see already exists in a lower layer
-(persistence's DatabaseUnavailableError/IntegrityConstraintError,
-vault_engine's/recovery_engine's
+FA-013 introduced one more (DuplicatePolicyDecisionIdError). FA-014 reuses
+DuplicatePolicyDecisionIdError verbatim for apply_items (the exact same
+contract applies) and introduces exactly one new type
+(EmptyBatchSelectionError). Every other exception a caller might see already
+exists in a lower layer (persistence's
+DatabaseUnavailableError/IntegrityConstraintError, vault_engine's/
+recovery_engine's
 InvalidVaultConfigurationError/InvalidRecoveryConfigurationError) and is
 re-raised as-is, never wrapped.
 """
 
+from collections.abc import Sequence
 from uuid import UUID
 
 from file_agent.application.dto import ApplyResult, RestoreResult, UndoResult
@@ -53,3 +57,28 @@ class DuplicatePolicyDecisionIdError(ValueError):
     def __init__(self, duplicate_ids: tuple[UUID, ...]) -> None:
         super().__init__(f"duplicate policy_decision_id(s) in input: {duplicate_ids}")
         self.duplicate_ids = duplicate_ids
+
+
+class EmptyBatchSelectionError(ValueError):
+    """Raised by apply_items(policy_decision_ids=[]). An empty batch apply
+    is a caller/UI programming error, not a business outcome -- it must not
+    create a BATCH_APPLY_STARTED history entry (no history noise for
+    nothing selected). Validated before any persistence query."""
+
+    def __init__(self) -> None:
+        super().__init__("apply_items() requires at least one policy_decision_id")
+
+
+def reject_duplicate_policy_decision_ids(policy_decision_ids: Sequence[UUID]) -> None:
+    """Shared by create_organization_plan (FA-013) and apply_items (FA-014)
+    -- identical contract: duplicates are invalid caller input, rejected
+    before any persistence query or filesystem I/O, never silently
+    deduplicated."""
+    seen: set[UUID] = set()
+    duplicates: list[UUID] = []
+    for policy_decision_id in policy_decision_ids:
+        if policy_decision_id in seen:
+            duplicates.append(policy_decision_id)
+        seen.add(policy_decision_id)
+    if duplicates:
+        raise DuplicatePolicyDecisionIdError(tuple(duplicates))

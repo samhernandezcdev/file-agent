@@ -242,6 +242,11 @@ def _parse_transaction_result(event: DomainEvent) -> TransactionResult:
             else None
         ),
         transaction_engine_id=payload["transaction_engine_id"],
+        batch_id=(
+            UUID(str(payload["batch_id"]))
+            if payload.get("batch_id") is not None
+            else None
+        ),
     )
 
 
@@ -460,3 +465,14 @@ def find_recovery_result(
         return _parse_recovery_result(outcome)
     except (KeyError, ValueError, TypeError, ValidationError) as exc:
         return _malformed(recovery_id, exc)
+
+
+# --- Batch (FA-014) -------------------------------------------------------
+# Batch event reconstruction (BATCH_APPLY_STARTED/BATCH_ITEM_RECORDED/
+# BATCH_APPLY_COMPLETED) lives entirely in application/history.py, not here
+# -- unlike every entity type above, all three batch event types share one
+# entity_id (the batch_id itself), so a single store.list_events(BATCH,
+# batch_id) call is sufficient and this module has no batch-specific payload
+# shape to know about. find_transaction_result above remains the one
+# queries.py primitive batch history reconstruction reuses (for authoritative
+# cross-verification of transaction-routed items).

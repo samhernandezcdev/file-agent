@@ -194,6 +194,7 @@ class TransactionEngine:
             rejection_code=code,
             evaluated_at=evaluated_at,
             transaction_engine_id=TRANSACTION_ENGINE_ID,
+            batch_id=request.batch_id,
         )
 
     def _terminal(
@@ -225,6 +226,7 @@ class TransactionEngine:
             started_at=started_at,
             completed_at=completed_at,
             transaction_engine_id=TRANSACTION_ENGINE_ID,
+            batch_id=request.batch_id,
         )
 
 
@@ -251,6 +253,7 @@ def transaction_requested_event(request: TransactionRequest) -> DomainEvent:
             "expected_sha256": request.expected_sha256,
             "expected_size": request.expected_size,
             "transaction_engine_id": TRANSACTION_ENGINE_ID,
+            "batch_id": str(request.batch_id) if request.batch_id is not None else None,
         },
     )
 
@@ -305,5 +308,6 @@ def transaction_result_event(result: TransactionResult) -> DomainEvent:
                 else None
             ),
             "transaction_engine_id": result.transaction_engine_id,
+            "batch_id": str(result.batch_id) if result.batch_id is not None else None,
         },
     )

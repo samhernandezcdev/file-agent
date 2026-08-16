@@ -5,11 +5,13 @@ for the trust-boundary contract.
 
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from uuid import UUID
+from pathlib import Path
+from uuid import UUID, uuid4
 from weakref import WeakKeyDictionary
 
-from file_agent.application import queries
+from file_agent.application import history, queries
 from file_agent.application.dto import (
     AnalysisFailure,
     AnalyzedItem,
@@ -17,11 +19,24 @@ from file_agent.application.dto import (
     ApplicationOutcomeStatus,
     ApplicationRejectionReason,
     ApplyResult,
+    BatchApplyItemResult,
+    BatchApplyItemStatus,
+    BatchApplyResult,
+    BatchApplySummary,
+    BatchStatus,
     RestoreResult,
     ReviewActionResult,
     UndoResult,
 )
-from file_agent.application.errors import TerminalPersistenceError
+from file_agent.application.errors import (
+    EmptyBatchSelectionError,
+    TerminalPersistenceError,
+    reject_duplicate_policy_decision_ids,
+)
+from file_agent.application.history import (
+    BatchHistoryEntry,
+    UnavailableBatchHistoryRow,
+)
 from file_agent.application.organization_plan import OrganizationPlan
 from file_agent.application.planner import build_organization_plan
 from file_agent.classifier import FileClassifier, classification_event
@@ -124,6 +139,113 @@ def _capture_lookup_reason(
         queries.LookupStatus.AMBIGUOUS: ApplicationRejectionReason.AMBIGUOUS_CAPTURE_HISTORY,
         queries.LookupStatus.INCOMPLETE: ApplicationRejectionReason.REQUESTED_WITHOUT_TERMINAL,
     }[status]
+
+
+@dataclass(frozen=True, slots=True)
+class _ApplyOutcome:
+    """Private, richer sibling of the public ApplyResult -- the single
+    trusted result shape _apply_one returns. apply_item projects it down to
+    ApplyResult (unchanged public contract); apply_items projects it up to
+    the richer BatchApplyItemResult, which additionally needs proposal_id/
+    file_id/filename for display. Never exported outside this module."""
+
+    policy_decision_id: UUID
+    proposal_id: UUID | None
+    file_id: UUID | None
+    filename: str | None
+    status: ApplicationOutcomeStatus
+    transaction_id: UUID | None
+    destination_path: Path | None
+    reason_code: str | None
+    reason: str | None
+
+    def to_apply_result(self) -> ApplyResult:
+        return ApplyResult(
+            self.policy_decision_id,
+            self.transaction_id,
+            self.status,
+            self.destination_path,
+            self.reason_code,
+            self.reason,
+        )
+
+
+# reason_code -> BatchApplyItemStatus for the non-SUCCEEDED, non-default
+# cases (mirrors PlanStatus.INVALID's own scope: downstream state is
+# ambiguous, not identity). Every other REJECTED/FAILED reason_code falls
+# through to NOT_APPLIED.
+_BATCH_ITEM_STATUS_FOR_REASON: dict[str, BatchApplyItemStatus] = {
+    ApplicationRejectionReason.REVIEW_OUTCOME_IS_SKIP.value: BatchApplyItemStatus.SKIPPED,
+    ApplicationRejectionReason.AMBIGUOUS_REVIEW_HISTORY.value: BatchApplyItemStatus.INVALID,
+    ApplicationRejectionReason.MALFORMED_EVENT_PAYLOAD.value: BatchApplyItemStatus.INVALID,
+}
+
+
+def _batch_item_status(
+    status: ApplicationOutcomeStatus, reason_code: str | None
+) -> BatchApplyItemStatus:
+    if status is ApplicationOutcomeStatus.SUCCEEDED:
+        return BatchApplyItemStatus.APPLIED
+    if reason_code is not None and reason_code in _BATCH_ITEM_STATUS_FOR_REASON:
+        return _BATCH_ITEM_STATUS_FOR_REASON[reason_code]
+    return BatchApplyItemStatus.NOT_APPLIED
+
+
+def _batch_item_result_from_outcome(
+    input_index: int, outcome: _ApplyOutcome
+) -> BatchApplyItemResult:
+    return BatchApplyItemResult(
+        policy_decision_id=outcome.policy_decision_id,
+        input_index=input_index,
+        proposal_id=outcome.proposal_id,
+        file_id=outcome.file_id,
+        filename=outcome.filename,
+        status=_batch_item_status(outcome.status, outcome.reason_code),
+        transaction_id=outcome.transaction_id,
+        destination_path=outcome.destination_path,
+        reason_code=outcome.reason_code,
+        reason=outcome.reason,
+    )
+
+
+def _batch_item_result_from_apply_result(
+    input_index: int, result: ApplyResult
+) -> BatchApplyItemResult:
+    """§6's documented, accepted display gap: TerminalPersistenceError only
+    carries the public ApplyResult, not the richer _ApplyOutcome -- this
+    item's proposal_id/file_id/filename are unavailable even though
+    status/transaction_id/destination_path (the fields that actually matter
+    for follow-up action, e.g. undo_transaction) are always present."""
+    return BatchApplyItemResult(
+        policy_decision_id=result.policy_decision_id,
+        input_index=input_index,
+        proposal_id=None,
+        file_id=None,
+        filename=None,
+        status=_batch_item_status(result.status, result.reason_code),
+        transaction_id=result.transaction_id,
+        destination_path=result.destination_path,
+        reason_code=result.reason_code,
+        reason=result.reason,
+    )
+
+
+def _summarize_batch_items(
+    requested_policy_decision_ids: Sequence[UUID],
+    items: Sequence[BatchApplyItemResult],
+) -> BatchApplySummary:
+    applied = sum(1 for i in items if i.status is BatchApplyItemStatus.APPLIED)
+    not_applied = sum(1 for i in items if i.status is BatchApplyItemStatus.NOT_APPLIED)
+    skipped = sum(1 for i in items if i.status is BatchApplyItemStatus.SKIPPED)
+    invalid = sum(1 for i in items if i.status is BatchApplyItemStatus.INVALID)
+    return BatchApplySummary(
+        selected=len(requested_policy_decision_ids),
+        processed=len(items),
+        applied=applied,
+        not_applied=not_applied,
+        skipped=skipped,
+        invalid=invalid,
+    )
 
 
 class FileAgentApplicationService:
@@ -317,15 +439,147 @@ class FileAgentApplicationService:
     # --- Apply -----------------------------------------------------------------
 
     def apply_item(self, policy_decision_id: UUID) -> ApplyResult:
+        return self._apply_one(policy_decision_id, batch_id=None).to_apply_result()
+
+    def apply_items(self, policy_decision_ids: Sequence[UUID]) -> BatchApplyResult:
+        """Batch intent is NOT batch authorization: every id below walks the
+        exact same trusted per-item path _apply_one already walks for
+        apply_item -- this method only orchestrates that path N times, in
+        caller order, with best-effort/per-item atomicity (a normal business
+        rejection continues the batch; only an unreliable audit trail stops
+        it early). See the FA-014 design doc §5/§9/§10 for the full
+        rationale this sequencing implements verbatim."""
+        frozen = tuple(policy_decision_ids)
+        if not frozen:
+            raise EmptyBatchSelectionError
+        reject_duplicate_policy_decision_ids(frozen)
+
+        batch_id = uuid4()
+        started_at = self._clock()
+        # If this itself raises, it propagates unwrapped -- zero mutation has
+        # happened yet, exactly like apply_item's own REQUESTED-persist-
+        # failure rule.
+        self._store.record_event(
+            history.batch_apply_started_event(batch_id, frozen, started_at)
+        )
+
+        items: list[BatchApplyItemResult] = []
+        for input_index, policy_decision_id in enumerate(frozen):
+            try:
+                outcome = self._apply_one(policy_decision_id, batch_id=batch_id)
+            except TerminalPersistenceError as exc:
+                # Real mutation happened, but its own authoritative terminal
+                # event did not persist -- do NOT persist BATCH_ITEM_RECORDED
+                # for it (durable history must not manufacture certainty the
+                # audit trail doesn't have). This call's own in-process
+                # result still reports the real outcome via exc.result.
+                # _apply_one only ever raises TerminalPersistenceError
+                # carrying an ApplyResult (never UndoResult/RestoreResult --
+                # those belong to undo_transaction/restore_capture).
+                assert isinstance(exc.result, ApplyResult)
+                items.append(
+                    _batch_item_result_from_apply_result(input_index, exc.result)
+                )
+                return self._incomplete_batch_result(
+                    batch_id, started_at, frozen, items
+                )
+            except (DatabaseUnavailableError, IntegrityConstraintError):
+                # _apply_one's own pre-mutation persist failed -- nothing
+                # happened for this id, no BatchApplyItemResult to append.
+                return self._incomplete_batch_result(
+                    batch_id, started_at, frozen, items
+                )
+
+            # outcome's authoritative facts are already durably persisted by
+            # _apply_one itself -- durably trustworthy independent of
+            # whether the checkpoint below succeeds.
+            item_result = _batch_item_result_from_outcome(input_index, outcome)
+
+            try:
+                self._store.record_event(
+                    history.batch_item_recorded_event(
+                        batch_id, item_result, self._clock()
+                    )
+                )
+            except (DatabaseUnavailableError, IntegrityConstraintError):
+                # _apply_one completed normally and item_result is genuinely
+                # known in-process -- only the durable checkpoint failed.
+                # This call's own result still includes it; durable history
+                # will not have this checkpoint. Stop -- no further ids.
+                items.append(item_result)
+                return self._incomplete_batch_result(
+                    batch_id, started_at, frozen, items
+                )
+
+            items.append(item_result)
+            # Normal business REJECTED/SUCCEEDED/FAILED, checkpoint durably
+            # recorded -> continue to the next id (best-effort atomicity).
+
+        completed_at = self._clock()
+        summary = _summarize_batch_items(frozen, items)
+        try:
+            self._store.record_event(
+                history.batch_apply_completed_event(batch_id, completed_at, summary)
+            )
+        except (DatabaseUnavailableError, IntegrityConstraintError):
+            # Every item checkpoint already durably recorded; only the final
+            # terminal marker failed to persist.
+            return self._incomplete_batch_result(batch_id, started_at, frozen, items)
+
+        return BatchApplyResult(
+            batch_id=batch_id,
+            status=BatchStatus.COMPLETED,
+            started_at=started_at,
+            completed_at=completed_at,
+            requested_policy_decision_ids=frozen,
+            items=tuple(items),
+            summary=summary,
+        )
+
+    def _incomplete_batch_result(
+        self,
+        batch_id: UUID,
+        started_at: datetime,
+        requested_policy_decision_ids: tuple[UUID, ...],
+        items: list[BatchApplyItemResult],
+    ) -> BatchApplyResult:
+        return BatchApplyResult(
+            batch_id=batch_id,
+            status=BatchStatus.INCOMPLETE,
+            started_at=started_at,
+            completed_at=None,
+            requested_policy_decision_ids=requested_policy_decision_ids,
+            items=tuple(items),
+            summary=_summarize_batch_items(requested_policy_decision_ids, items),
+        )
+
+    def get_batch_history(
+        self, batch_id: UUID, *, include_items: bool = False
+    ) -> BatchHistoryEntry | queries.LookupFailure:
+        return history.get_batch_history(
+            self._store, batch_id, include_items=include_items
+        )
+
+    def list_recent_batch_history(
+        self, *, limit: int = 20
+    ) -> tuple[BatchHistoryEntry | UnavailableBatchHistoryRow, ...]:
+        return history.list_recent_batch_history(self._store, limit=limit)
+
+    def _apply_one(
+        self, policy_decision_id: UUID, *, batch_id: UUID | None
+    ) -> "_ApplyOutcome":
         policy_decision = queries.find_policy_decision(self._store, policy_decision_id)
         if isinstance(policy_decision, queries.LookupFailure):
             code, detail = _not_found_or_malformed(
                 policy_decision, ApplicationRejectionReason.POLICY_DECISION_NOT_FOUND
             )
-            return ApplyResult(
+            return _ApplyOutcome(
                 policy_decision_id,
                 None,
+                None,
+                None,
                 ApplicationOutcomeStatus.REJECTED,
+                None,
                 None,
                 code,
                 detail,
@@ -336,20 +590,26 @@ class FileAgentApplicationService:
             code, detail = _not_found_or_malformed(
                 proposal, ApplicationRejectionReason.PROPOSAL_NOT_FOUND
             )
-            return ApplyResult(
+            return _ApplyOutcome(
                 policy_decision_id,
                 None,
+                policy_decision.file_id,
+                None,
                 ApplicationOutcomeStatus.REJECTED,
+                None,
                 None,
                 code,
                 detail,
             )
 
         if policy_decision.decision is PolicyOutcome.BLOCK:
-            return ApplyResult(
+            return _ApplyOutcome(
                 policy_decision_id,
+                proposal.id,
+                policy_decision.file_id,
                 None,
                 ApplicationOutcomeStatus.REJECTED,
+                None,
                 None,
                 ApplicationRejectionReason.POLICY_BLOCK.value,
                 "BLOCK cannot be overridden",
@@ -363,28 +623,37 @@ class FileAgentApplicationService:
                 self._store, policy_decision_id
             )
             if isinstance(review, queries.LookupFailure):
-                return ApplyResult(
+                return _ApplyOutcome(
                     policy_decision_id,
+                    proposal.id,
+                    policy_decision.file_id,
                     None,
                     ApplicationOutcomeStatus.REJECTED,
+                    None,
                     None,
                     ApplicationRejectionReason.AMBIGUOUS_REVIEW_HISTORY.value,
                     review.detail,
                 )
             if review is None:
-                return ApplyResult(
+                return _ApplyOutcome(
                     policy_decision_id,
+                    proposal.id,
+                    policy_decision.file_id,
                     None,
                     ApplicationOutcomeStatus.REJECTED,
+                    None,
                     None,
                     ApplicationRejectionReason.POLICY_REVIEW_WITHOUT_APPROVAL.value,
                     "no effective review recorded for this policy decision",
                 )
             if review.outcome is HumanReviewOutcome.SKIP:
-                return ApplyResult(
+                return _ApplyOutcome(
                     policy_decision_id,
+                    proposal.id,
+                    policy_decision.file_id,
                     None,
                     ApplicationOutcomeStatus.REJECTED,
+                    None,
                     None,
                     ApplicationRejectionReason.REVIEW_OUTCOME_IS_SKIP.value,
                     "effective review outcome is SKIP",
@@ -405,10 +674,13 @@ class FileAgentApplicationService:
 
         discovered = self._store.get_discovered_file(policy_decision.file_id)
         if discovered is None:
-            return ApplyResult(
+            return _ApplyOutcome(
                 policy_decision_id,
+                proposal.id,
+                policy_decision.file_id,
                 None,
                 ApplicationOutcomeStatus.REJECTED,
+                None,
                 None,
                 ApplicationRejectionReason.DISCOVERED_FILE_NOT_FOUND.value,
                 f"no DiscoveredFile with id={policy_decision.file_id}",
@@ -444,6 +716,10 @@ class FileAgentApplicationService:
             expected_created_at=proposal.expected_created_at,
             expected_modified_at=proposal.expected_modified_at,
             expected_sha256=proposal.sha256,
+            # Pure correlation metadata (None for a direct apply_item call) --
+            # never read by any precondition/authorization check in this
+            # engine; see TransactionRequest.batch_id's own docstring.
+            batch_id=batch_id,
         )
 
         engine = TransactionEngine(self._sandbox_root, clock=self._clock)
@@ -452,44 +728,68 @@ class FileAgentApplicationService:
             outcome, TransactionResult
         ):  # REJECTED -- prepare() never mutates
             self._store.record_event(transaction_result_event(outcome))
-            return self._apply_result_from_transaction(policy_decision_id, outcome)
+            return self._apply_outcome_from_transaction(
+                policy_decision_id,
+                proposal.id,
+                discovered.id,
+                discovered.filename,
+                outcome,
+            )
 
         self._store.record_event(transaction_requested_event(request))  # checkpoint
         result = engine.commit(outcome)  # the mutation happens here
-        apply_result = self._apply_result_from_transaction(policy_decision_id, result)
+        apply_outcome = self._apply_outcome_from_transaction(
+            policy_decision_id, proposal.id, discovered.id, discovered.filename, result
+        )
         try:
             self._store.record_event(transaction_result_event(result))  # terminal
         except (DatabaseUnavailableError, IntegrityConstraintError) as exc:
-            raise TerminalPersistenceError(apply_result, exc) from exc
-        return apply_result
+            raise TerminalPersistenceError(
+                apply_outcome.to_apply_result(), exc
+            ) from exc
+        return apply_outcome
 
-    def _apply_result_from_transaction(
-        self, policy_decision_id: UUID, result: TransactionResult
-    ) -> ApplyResult:
+    def _apply_outcome_from_transaction(
+        self,
+        policy_decision_id: UUID,
+        proposal_id: UUID,
+        file_id: UUID,
+        filename: str,
+        result: TransactionResult,
+    ) -> "_ApplyOutcome":
         if result.status is TransactionStatus.SUCCEEDED:
-            return ApplyResult(
+            return _ApplyOutcome(
                 policy_decision_id,
-                result.request_id,
+                proposal_id,
+                file_id,
+                filename,
                 ApplicationOutcomeStatus.SUCCEEDED,
+                result.request_id,
                 result.destination_path,
                 None,
                 None,
             )
         if result.status is TransactionStatus.REJECTED:
-            return ApplyResult(
+            return _ApplyOutcome(
                 policy_decision_id,
-                result.request_id,
+                proposal_id,
+                file_id,
+                filename,
                 ApplicationOutcomeStatus.REJECTED,
+                result.request_id,
                 None,
                 result.rejection_code.value
                 if result.rejection_code is not None
                 else None,
                 result.failure_reason,
             )
-        return ApplyResult(
+        return _ApplyOutcome(
             policy_decision_id,
-            result.request_id,
+            proposal_id,
+            file_id,
+            filename,
             ApplicationOutcomeStatus.FAILED,
+            result.request_id,
             None,
             None,
             result.failure_reason,

@@ -80,6 +80,24 @@ TransactionEngine itself use -- so preview and execution-time destination
 safety can never silently diverge. policy_decision_ids is the plan's
 explicit lineage; there is no "latest scan"/"latest for this file_id"
 lookup anywhere in this module.
+
+=== Batch apply / history (FA-014) ===
+
+apply_items(policy_decision_ids) orchestrates the exact same trusted
+per-item path apply_item already walks (_apply_one), once per selected id,
+in caller order -- BATCH INTENT IS NOT BATCH AUTHORIZATION. Atomicity is
+best-effort/per-item: a normal business rejection continues the batch; only
+an unreliable audit trail (a durability failure, never a business outcome)
+stops it early, for the remaining unprocessed ids only. There is no batch
+rollback. A durable, event-sourced batch history
+(BATCH_APPLY_STARTED/BATCH_ITEM_RECORDED/BATCH_APPLY_COMPLETED, no new SQL
+table) records each item's outcome as it becomes durably trustworthy, so a
+crash mid-batch never loses already-known results. get_batch_history and
+list_recent_batch_history (application/history.py) share one internal
+reconstruction path, so a list row is never less authoritative than the
+detail view -- only less verbose; a malformed/ambiguous historical batch
+renders as UnavailableBatchHistoryRow rather than fabricated counts or a
+silently dropped row.
 """
 
 from file_agent.application.dto import (
@@ -89,13 +107,24 @@ from file_agent.application.dto import (
     ApplicationOutcomeStatus,
     ApplicationRejectionReason,
     ApplyResult,
+    BatchApplyItemResult,
+    BatchApplyItemStatus,
+    BatchApplyResult,
+    BatchApplySummary,
+    BatchStatus,
     RestoreResult,
     ReviewActionResult,
     UndoResult,
 )
 from file_agent.application.errors import (
     DuplicatePolicyDecisionIdError,
+    EmptyBatchSelectionError,
     TerminalPersistenceError,
+)
+from file_agent.application.history import (
+    BatchHistoryEntry,
+    BatchHistoryItem,
+    UnavailableBatchHistoryRow,
 )
 from file_agent.application.organization_plan import (
     OrganizationPlan,
@@ -114,7 +143,15 @@ __all__ = [
     "ApplicationOutcomeStatus",
     "ApplicationRejectionReason",
     "ApplyResult",
+    "BatchApplyItemResult",
+    "BatchApplyItemStatus",
+    "BatchApplyResult",
+    "BatchApplySummary",
+    "BatchHistoryEntry",
+    "BatchHistoryItem",
+    "BatchStatus",
     "DuplicatePolicyDecisionIdError",
+    "EmptyBatchSelectionError",
     "FileAgentApplicationService",
     "OrganizationPlan",
     "OrganizationPlanItem",
@@ -125,5 +162,6 @@ __all__ = [
     "RestoreResult",
     "ReviewActionResult",
     "TerminalPersistenceError",
+    "UnavailableBatchHistoryRow",
     "UndoResult",
 ]

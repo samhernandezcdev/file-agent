@@ -35,7 +35,7 @@ from uuid import UUID, uuid4
 
 from file_agent.application import queries
 from file_agent.application.dto import ApplicationRejectionReason
-from file_agent.application.errors import DuplicatePolicyDecisionIdError
+from file_agent.application.errors import reject_duplicate_policy_decision_ids
 from file_agent.application.organization_plan import (
     OrganizationPlan,
     OrganizationPlanItem,
@@ -82,7 +82,7 @@ def build_organization_plan(
     never silently deduplicated, never sorted, never represented as a
     PlanIssue."""
     frozen = tuple(policy_decision_ids)
-    _reject_duplicates(frozen)
+    reject_duplicate_policy_decision_ids(frozen)
 
     items: list[OrganizationPlanItem] = []
     issues: list[PlanIssue] = []
@@ -102,17 +102,6 @@ def build_organization_plan(
         issues=tuple(issues),
         summary=_summarize(items, issues),
     )
-
-
-def _reject_duplicates(frozen: tuple[UUID, ...]) -> None:
-    seen: set[UUID] = set()
-    duplicates: list[UUID] = []
-    for policy_decision_id in frozen:
-        if policy_decision_id in seen:
-            duplicates.append(policy_decision_id)
-        seen.add(policy_decision_id)
-    if duplicates:
-        raise DuplicatePolicyDecisionIdError(tuple(duplicates))
 
 
 def _issue_reason(

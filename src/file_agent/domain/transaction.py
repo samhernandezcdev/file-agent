@@ -86,6 +86,10 @@ class TransactionRequest(BaseModel):
     exactly the fields needed to reconstruct a synthetic DiscoveredFile and
     reverify identity via the existing FileHasher immediately before move."""
     requested_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    batch_id: UUID | None = None
+    """FA-014: pure correlation metadata, never authorization. None for a
+    single apply_item() call; set by apply_items() to the batch's own id.
+    Never read by any precondition/authorization check in this engine."""
 
     _validate_source_path = field_validator("source_path")(ensure_absolute_path)
     _validate_destination_path = field_validator("destination_path")(
@@ -131,6 +135,9 @@ class TransactionResult(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     transaction_engine_id: str = Field(min_length=1)
+    batch_id: UUID | None = None
+    """FA-014: pure correlation metadata, copied verbatim from the
+    originating TransactionRequest. Never authorization."""
 
     _validate_evaluated_at = field_validator("evaluated_at")(normalize_to_utc)
     _validate_started_at = field_validator("started_at")(

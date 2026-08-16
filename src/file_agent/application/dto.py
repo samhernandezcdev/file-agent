@@ -5,6 +5,7 @@ input.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from uuid import UUID
@@ -115,3 +116,65 @@ class RestoreResult:
     restored_path: Path | None
     reason_code: str | None
     reason: str | None
+
+
+class BatchStatus(str, Enum):
+    """Exactly two values -- no FAILED. COMPLETED means BATCH_APPLY_COMPLETED
+    was durably found for this batch_id (the batch reached its normal
+    completed checkpoint). INCOMPLETE covers every other case uniformly:
+    stopped early because an audit-trail persist failed, or a genuine
+    process crash mid-batch -- History never needs to (and never claims to)
+    distinguish which of those occurred, only that completion was never
+    durably confirmed."""
+
+    COMPLETED = "completed"
+    INCOMPLETE = "incomplete"
+
+
+class BatchApplyItemStatus(str, Enum):
+    APPLIED = "applied"
+    NOT_APPLIED = "not_applied"
+    SKIPPED = "skipped"
+    INVALID = "invalid"
+
+
+@dataclass(frozen=True, slots=True)
+class BatchApplyItemResult:
+    policy_decision_id: UUID
+    input_index: int
+    """This id's 0-based position in the caller's original sequence -- the
+    same durable ordering key BATCH_ITEM_RECORDED persists."""
+    proposal_id: UUID | None
+    """None only if PolicyDecision/FileProposal itself couldn't be
+    reconstructed."""
+    file_id: UUID | None
+    filename: str | None
+    status: BatchApplyItemStatus
+    transaction_id: UUID | None
+    """Present iff a TransactionEngine result exists for this id."""
+    destination_path: Path | None
+    reason_code: str | None
+    """None iff status is APPLIED."""
+    reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BatchApplySummary:
+    selected: int
+    processed: int
+    applied: int
+    not_applied: int
+    skipped: int
+    invalid: int
+
+
+@dataclass(frozen=True, slots=True)
+class BatchApplyResult:
+    batch_id: UUID
+    status: BatchStatus
+    started_at: datetime
+    completed_at: datetime | None
+    """None iff status is INCOMPLETE."""
+    requested_policy_decision_ids: tuple[UUID, ...]
+    items: tuple[BatchApplyItemResult, ...]
+    summary: BatchApplySummary

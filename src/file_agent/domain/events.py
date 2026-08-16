@@ -32,6 +32,9 @@ class EventType(str, Enum):
     RECOVERY_SUCCEEDED = "recovery_succeeded"
     RECOVERY_REJECTED = "recovery_rejected"
     RECOVERY_FAILED = "recovery_failed"
+    BATCH_APPLY_STARTED = "batch_apply_started"
+    BATCH_ITEM_RECORDED = "batch_item_recorded"
+    BATCH_APPLY_COMPLETED = "batch_apply_completed"
 
 
 class EntityType(str, Enum):
@@ -45,6 +48,7 @@ class EntityType(str, Enum):
     SCAN = "scan"
     VAULT_CAPTURE = "vault_capture"
     RECOVERY = "recovery"
+    BATCH = "batch"
 
 
 class DomainEvent(BaseModel):
