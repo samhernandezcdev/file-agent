@@ -39,6 +39,58 @@ def test_repeated_scans_of_same_path_do_not_overwrite_unrelated_observations(
     assert fetched1.path == fetched2.path == shared_path
 
 
+def test_record_hash_success_never_updates_path_size_or_timestamps(
+    store: FileAgentStore,
+    make_scan_result: Callable[..., ScanResult],
+    make_event: Callable[..., DomainEvent],
+) -> None:
+    """FA-013 provenance regression: application/planner.py reads
+    source_path/filename off the persisted FileObservationRow (keyed by
+    file_id, nominally "shared" across analysis generations). That is only
+    safe because record_hash_success -- the one write path a re-analysis
+    (analyze_file) can reach -- updates ONLY sha256, never path/size_bytes/
+    created_at/modified_at, even when the HashSuccess passed in carries
+    DIFFERENT values for those fields (as a genuine re-stat during
+    analyze_file legitimately would)."""
+    result = make_scan_result(file_count=1)
+    store.record_scan(result)
+    original = result.files[0]
+
+    changed_size = original.size_bytes + 12345
+    changed_created_at = original.created_at.replace(year=original.created_at.year - 1)
+    changed_modified_at = original.modified_at.replace(
+        year=original.modified_at.year - 1
+    )
+    hashed = original.model_copy(
+        update={
+            "size_bytes": changed_size,
+            "created_at": changed_created_at,
+            "modified_at": changed_modified_at,
+            "sha256": "c" * 64,
+        }
+    )
+    event = make_event(
+        event_type=EventType.FILE_HASHED,
+        entity_type=EntityType.FILE,
+        entity_id=hashed.id,
+        payload={"sha256": hashed.sha256, "path": str(hashed.path)},
+    )
+
+    store.record_hash_success(
+        HashSuccess(original=original, hashed=hashed, event=event)
+    )
+
+    fetched = store.get_discovered_file(original.id)
+    assert fetched is not None
+    assert fetched.sha256 == "c" * 64  # the one field allowed to change
+    # everything else stays exactly what was persisted at initial insert --
+    # never overwritten by a later generation's re-stat
+    assert fetched.path == original.path
+    assert fetched.size_bytes == original.size_bytes
+    assert fetched.created_at == original.created_at
+    assert fetched.modified_at == original.modified_at
+
+
 def test_two_different_ids_can_share_identical_sha256(
     store: FileAgentStore,
     make_scan_result: Callable[..., ScanResult],

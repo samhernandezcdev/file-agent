@@ -53,6 +53,7 @@ class RejectionCode(str, Enum):
     DESTINATION_ALREADY_EXISTS = "destination_already_exists"
     DESTINATION_PARENT_MISSING = "destination_parent_missing"
     DESTINATION_UNSAFE_REPARSE_POINT = "destination_unsafe_reparse_point"
+    DESTINATION_OBSERVATION_FAILED = "destination_observation_failed"
 
 
 class TransactionRequest(BaseModel):

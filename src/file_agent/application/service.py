@@ -4,7 +4,7 @@ for the trust-boundary contract.
 """
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 from weakref import WeakKeyDictionary
@@ -22,7 +22,10 @@ from file_agent.application.dto import (
     UndoResult,
 )
 from file_agent.application.errors import TerminalPersistenceError
+from file_agent.application.organization_plan import OrganizationPlan
+from file_agent.application.planner import build_organization_plan
 from file_agent.classifier import FileClassifier, classification_event
+from file_agent.destination import resolve_destination
 from file_agent.domain import (
     CompletedMoveEvidence,
     DiscoveredFile,
@@ -63,9 +66,6 @@ from file_agent.transaction_engine import (
     TransactionEngine,
     transaction_requested_event,
     transaction_result_event,
-)
-from file_agent.transaction_engine.rules import (
-    PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY,
 )
 
 
@@ -419,10 +419,11 @@ class FileAgentApplicationService:
             "and HumanReviewEngine.record() refuses APPROVE without one"
         )
 
-        physical_dir = PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY[
-            proposal.proposed_destination_category
-        ]
-        destination_path = self._sandbox_root.path / physical_dir / discovered.filename
+        destination_path = resolve_destination(
+            self._sandbox_root,
+            proposal.proposed_destination_category,
+            discovered.filename,
+        )
 
         request = TransactionRequest(
             file_id=discovered.id,
@@ -674,4 +675,19 @@ class FileAgentApplicationService:
             None,
             None,
             result.failure_reason,
+        )
+
+    # --- Organization plan (preview) ----------------------------------------
+
+    def create_organization_plan(
+        self, policy_decision_ids: Sequence[UUID]
+    ) -> OrganizationPlan:
+        """Read-only preview: never mutates, never records a review, never
+        constructs an ExecutionAuthorization, never calls TransactionEngine/
+        RecoveryEngine. See application/planner.py::build_organization_plan
+        and application/organization_plan.py for the full contract. Preview
+        is not authorization -- TransactionEngine independently reverifies
+        live state before any mutation apply_item performs."""
+        return build_organization_plan(
+            self._store, self._sandbox_root, policy_decision_ids, clock=self._clock
         )

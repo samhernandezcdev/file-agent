@@ -1,13 +1,22 @@
 """Internal, destination-side path-safety helpers. Not part of the public API.
 
+Promoted (moved, not duplicated) from transaction_engine._paths -- once
+destination.inspection became the single shared implementation both
+OrganizationPlanner and TransactionEngine consume, keeping a second, private
+copy inside transaction_engine would have re-created exactly the kind of
+divergence risk this package exists to eliminate. There is now exactly one
+canonical implementation. `resolve_for_containment` is re-exported via
+destination/__init__.py for transaction_engine.preconditions' own
+request-self-consistency check (check_destination_category_physical_path),
+which needs plain containment resolution but not the full destination
+inspection; `is_unsafe_reparse_point`/`has_unsafe_reparse_ancestor` remain
+internal to this package, used by inspection.py only.
+
 Source-side containment/reparse safety is entirely delegated to the existing
-FileHasher (see engine.py) -- FileHasher already independently re-validates
-it, and duplicating that logic here would drift out of sync with FA-003's.
-Destination-side checks have no existing primitive to reuse (nothing
-validates a not-yet-existing path today), so this module duplicates the same
-small pattern scanner/hasher already use, rather than importing their
-private modules directly -- matching the precedent
-file_agent.classifier.result already set for _normalize_to_utc.
+FileHasher (see transaction_engine.engine) -- FileHasher already
+independently re-validates it, and duplicating that logic here would drift
+out of sync with FA-003's. Destination-side checks have no other existing
+primitive to reuse (nothing else validates a not-yet-existing path).
 """
 
 import os

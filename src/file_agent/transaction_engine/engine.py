@@ -32,13 +32,9 @@ from file_agent.scanner import SandboxRoot
 from file_agent.transaction_engine.errors import InvalidPreparedMoveError
 from file_agent.transaction_engine.preconditions import (
     check_authorization_linkage,
-    check_basename_preserved,
     check_destination_category_matches_authorization,
     check_destination_category_physical_path,
-    check_destination_collision,
-    check_destination_containment,
-    check_destination_parent_exists,
-    check_source_not_destination,
+    check_destination_readiness,
     verify_source_identity,
 )
 from file_agent.transaction_engine.rules import TRANSACTION_ENGINE_ID
@@ -124,14 +120,10 @@ class TransactionEngine:
             lambda: check_destination_category_matches_authorization(
                 request, authorization
             ),
-            lambda: check_source_not_destination(request),
-            lambda: check_basename_preserved(request),
             lambda: check_destination_category_physical_path(
                 request, self._sandbox_root
             ),
-            lambda: check_destination_containment(request, self._sandbox_root),
-            lambda: check_destination_parent_exists(request),
-            lambda: check_destination_collision(request),
+            lambda: check_destination_readiness(request, self._sandbox_root),
         )
         for check in precondition_checks:
             code = check()

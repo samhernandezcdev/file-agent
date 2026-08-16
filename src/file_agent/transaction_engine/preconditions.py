@@ -7,8 +7,12 @@ guardrails. engine.py sequences these calls; this module does not itself
 decide the order.
 """
 
-import os
-
+from file_agent.destination import (
+    PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY,
+    DestinationConflict,
+    inspect_destination,
+    resolve_for_containment,
+)
 from file_agent.domain import (
     DiscoveredFile,
     ExecutionAuthorization,
@@ -17,13 +21,6 @@ from file_agent.domain import (
 )
 from file_agent.hasher import FileHasher, HashFailure, HashIssueType
 from file_agent.scanner import SandboxRoot
-from file_agent.transaction_engine._paths import (
-    has_unsafe_reparse_ancestor,
-    resolve_for_containment,
-)
-from file_agent.transaction_engine.rules import (
-    PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY,
-)
 
 
 def check_authorization_linkage(
@@ -52,24 +49,6 @@ def check_destination_category_matches_authorization(
     return None
 
 
-def check_source_not_destination(request: TransactionRequest) -> RejectionCode | None:
-    source_resolved = resolve_for_containment(request.source_path)
-    destination_resolved = resolve_for_containment(request.destination_path)
-    if (
-        source_resolved is not None
-        and destination_resolved is not None
-        and source_resolved == destination_resolved
-    ):
-        return RejectionCode.SOURCE_EQUALS_DESTINATION
-    return None
-
-
-def check_basename_preserved(request: TransactionRequest) -> RejectionCode | None:
-    if request.source_path.name != request.destination_path.name:
-        return RejectionCode.BASENAME_MISMATCH
-    return None
-
-
 def check_destination_category_physical_path(
     request: TransactionRequest, sandbox_root: SandboxRoot
 ) -> RejectionCode | None:
@@ -89,34 +68,36 @@ def check_destination_category_physical_path(
     return None
 
 
-def check_destination_containment(
+_REJECTION_CODE_FOR_CONFLICT: dict[DestinationConflict, RejectionCode] = {
+    DestinationConflict.SOURCE_EQUALS_DESTINATION: RejectionCode.SOURCE_EQUALS_DESTINATION,
+    DestinationConflict.BASENAME_MISMATCH: RejectionCode.BASENAME_MISMATCH,
+    DestinationConflict.OUTSIDE_SANDBOX: RejectionCode.DESTINATION_OUTSIDE_SANDBOX,
+    DestinationConflict.UNSAFE_REPARSE_POINT: RejectionCode.DESTINATION_UNSAFE_REPARSE_POINT,
+    DestinationConflict.PARENT_MISSING: RejectionCode.DESTINATION_PARENT_MISSING,
+    DestinationConflict.ALREADY_OCCUPIED: RejectionCode.DESTINATION_ALREADY_EXISTS,
+    DestinationConflict.OBSERVATION_FAILED: RejectionCode.DESTINATION_OBSERVATION_FAILED,
+}
+
+
+def check_destination_readiness(
     request: TransactionRequest, sandbox_root: SandboxRoot
 ) -> RejectionCode | None:
-    resolved = resolve_for_containment(request.destination_path)
-    if resolved is None or not resolved.is_relative_to(sandbox_root.path):
-        return RejectionCode.DESTINATION_OUTSIDE_SANDBOX
-    if has_unsafe_reparse_ancestor(request.destination_path.parent, sandbox_root.path):
-        return RejectionCode.DESTINATION_UNSAFE_REPARSE_POINT
-    return None
-
-
-def check_destination_parent_exists(
-    request: TransactionRequest,
-) -> RejectionCode | None:
-    if not request.destination_path.parent.is_dir():
-        return RejectionCode.DESTINATION_PARENT_MISSING
-    return None
-
-
-def check_destination_collision(request: TransactionRequest) -> RejectionCode | None:
-    destination = request.destination_path
-    if (
-        destination.exists()
-        or destination.is_symlink()
-        or os.path.isjunction(destination)
-    ):
-        return RejectionCode.DESTINATION_ALREADY_EXISTS
-    return None
+    """Delegates to the shared, read-only destination.inspect_destination --
+    the exact same function OrganizationPlanner calls for preview (FA-013)
+    -- so TransactionEngine can never enforce different destination-safety
+    semantics than what preview showed for the same filesystem state.
+    Folds what were previously five separate preconditions
+    (check_source_not_destination, check_basename_preserved,
+    check_destination_containment, check_destination_parent_exists,
+    check_destination_collision) into one shared call; the fixed check order
+    inside inspect_destination itself reproduces their previous relative
+    precedence exactly."""
+    inspection = inspect_destination(
+        sandbox_root, request.source_path, request.destination_path
+    )
+    if inspection.conflict is DestinationConflict.NONE:
+        return None
+    return _REJECTION_CODE_FOR_CONFLICT[inspection.conflict]
 
 
 def verify_source_identity(

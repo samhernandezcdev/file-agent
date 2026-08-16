@@ -14,6 +14,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from file_agent.destination import PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY
 from file_agent.domain import (
     DestinationCategory,
     ExecutionAuthorization,
@@ -25,9 +26,6 @@ from file_agent.domain import (
 )
 from file_agent.scanner import SandboxRoot
 from file_agent.transaction_engine import TransactionEngine
-from file_agent.transaction_engine.rules import (
-    PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY,
-)
 
 
 @pytest.fixture

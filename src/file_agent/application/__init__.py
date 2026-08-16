@@ -63,6 +63,23 @@ callers of managed_fs.
    lineage checking (does authorization's lineage match this request's?)
    -- it cannot and does not verify persistence authenticity. That
    verification is this package's responsibility alone.
+
+=== OrganizationPlan / preview (FA-013) ===
+
+create_organization_plan(policy_decision_ids) returns an OrganizationPlan --
+an immutable, ephemeral (never persisted) product-facing preview snapshot.
+PREVIEW IS NOT AUTHORIZATION: a plan never itself authorizes filesystem
+mutation, and TransactionEngine always independently re-verifies live state
+before any apply_item call actually moves a file. OrganizationPlanner
+(application/planner.py) never mutates the filesystem, never imports
+managed_fs, never calls TransactionEngine/RecoveryEngine, never constructs
+ExecutionAuthorization, and never records a human review. It consumes (never
+re-derives) file_agent.destination's shared, read-only
+resolve_destination/inspect_destination -- the same functions apply_item and
+TransactionEngine itself use -- so preview and execution-time destination
+safety can never silently diverge. policy_decision_ids is the plan's
+explicit lineage; there is no "latest scan"/"latest for this file_id"
+lookup anywhere in this module.
 """
 
 from file_agent.application.dto import (
@@ -76,7 +93,18 @@ from file_agent.application.dto import (
     ReviewActionResult,
     UndoResult,
 )
-from file_agent.application.errors import TerminalPersistenceError
+from file_agent.application.errors import (
+    DuplicatePolicyDecisionIdError,
+    TerminalPersistenceError,
+)
+from file_agent.application.organization_plan import (
+    OrganizationPlan,
+    OrganizationPlanItem,
+    OrganizationPlanSummary,
+    PlanIssue,
+    PlanReasonCode,
+    PlanStatus,
+)
 from file_agent.application.service import FileAgentApplicationService
 
 __all__ = [
@@ -86,7 +114,14 @@ __all__ = [
     "ApplicationOutcomeStatus",
     "ApplicationRejectionReason",
     "ApplyResult",
+    "DuplicatePolicyDecisionIdError",
     "FileAgentApplicationService",
+    "OrganizationPlan",
+    "OrganizationPlanItem",
+    "OrganizationPlanSummary",
+    "PlanIssue",
+    "PlanReasonCode",
+    "PlanStatus",
     "RestoreResult",
     "ReviewActionResult",
     "TerminalPersistenceError",

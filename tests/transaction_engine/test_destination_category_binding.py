@@ -100,6 +100,42 @@ def test_documents_pointed_at_arbitrary_folder_is_rejected(
     assert outcome.rejection_code is RejectionCode.DESTINATION_CATEGORY_PATH_MISMATCH
 
 
+def test_simultaneous_category_mismatch_and_source_equals_destination_prefers_category_check(
+    sandbox_root: SandboxRoot,
+    make_source_file: Callable[..., Path],
+    make_request: Callable[..., TransactionRequest],
+    make_policy_decision: Callable[..., PolicyDecision],
+) -> None:
+    """Documents a deliberate FA-013 precedence change: check_destination_
+    category_physical_path now runs BEFORE the shared
+    destination.inspect_destination call (previously,
+    check_source_not_destination/check_basename_preserved ran first). For a
+    request where source == destination AND the destination sits in the
+    wrong physical directory for its claimed category,
+    DESTINATION_CATEGORY_PATH_MISMATCH now wins over
+    SOURCE_EQUALS_DESTINATION. Both outcomes are REJECTED with zero
+    filesystem mutation either way -- an audit-trail precedence detail, not
+    a safety regression -- but this pins the new, intentional precedence
+    down explicitly rather than leaving it an untested assumption."""
+    source = make_source_file("Executables/report.txt")
+    request = make_request(
+        source,
+        destination_category=DestinationCategory.DOCUMENTS,
+        destination_path=source,  # identical to source, AND wrong dir for DOCUMENTS
+    )
+    policy_decision = make_policy_decision(
+        request, destination_category=DestinationCategory.DOCUMENTS
+    )
+    authorization = ExecutionAuthorization.from_policy_auto(policy_decision)
+
+    engine = TransactionEngine(sandbox_root)
+    outcome = engine.prepare(request, authorization)
+
+    assert isinstance(outcome, TransactionResult)
+    assert outcome.rejection_code is RejectionCode.DESTINATION_CATEGORY_PATH_MISMATCH
+    assert source.exists()
+
+
 def test_matching_category_and_configured_directory_proceeds(
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],

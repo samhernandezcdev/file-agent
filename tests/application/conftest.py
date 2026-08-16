@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from file_agent.application import FileAgentApplicationService
+from file_agent.destination import PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY
 from file_agent.domain import DomainEvent, EventType
 from file_agent.persistence import (
     AppPaths,
@@ -21,9 +22,6 @@ from file_agent.persistence import (
 from file_agent.persistence.errors import DatabaseUnavailableError
 from file_agent.persistence.orm import Base
 from file_agent.scanner import SandboxRoot
-from file_agent.transaction_engine.rules import (
-    PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY,
-)
 
 
 class FailOnEventType:
