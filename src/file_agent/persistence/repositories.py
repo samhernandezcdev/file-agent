@@ -12,6 +12,7 @@ SQLite behavior. See FA-004 review M1.
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 from enum import Enum, auto
 from typing import Any, cast
 from uuid import UUID
@@ -21,7 +22,12 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from file_agent.persistence.errors import IntegrityConstraintError
-from file_agent.persistence.orm import DomainEventRow, FileObservationRow, ScanRow
+from file_agent.persistence.orm import (
+    DomainEventRow,
+    FileObservationRow,
+    ManagedRootRow,
+    ScanRow,
+)
 
 
 def insert_scan(session: Session, row: ScanRow) -> None:
@@ -107,6 +113,40 @@ def insert_event(session: Session, row: DomainEventRow) -> EventInsertOutcome:
         if getattr(existing, field) != getattr(row, field):
             return EventInsertOutcome.DUPLICATE_CONFLICTING
     return EventInsertOutcome.DUPLICATE_IDENTICAL
+
+
+def insert_managed_root(session: Session, row: ManagedRootRow) -> None:
+    session.add(row)
+    session.flush()
+
+
+def update_managed_root_removed_at(
+    session: Session, id: UUID, removed_at: datetime
+) -> int:
+    """Unconditional update -- the caller (FileAgentStore) has already
+    decided this id is a valid, currently-active row to remove; a 0 rowcount
+    (id not found) is surfaced to the caller to decide what it means."""
+    result = cast(
+        "CursorResult[Any]",
+        session.execute(
+            update(ManagedRootRow)
+            .where(ManagedRootRow.id == id)
+            .values(removed_at=removed_at)
+        ),
+    )
+    return result.rowcount
+
+
+def select_managed_root(session: Session, id: UUID) -> ManagedRootRow | None:
+    return session.get(ManagedRootRow, id)
+
+
+def select_managed_roots(session: Session) -> Sequence[ManagedRootRow]:
+    """Every ManagedRootRow, active and removed alike -- callers (store.py)
+    filter by removed_at as needed; this function makes no activity
+    assumption of its own."""
+    stmt = select(ManagedRootRow).order_by(ManagedRootRow.created_at.asc())
+    return session.execute(stmt).scalars().all()
 
 
 def select_scan(session: Session, id: UUID) -> ScanRow | None:

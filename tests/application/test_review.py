@@ -5,7 +5,7 @@ a caller-constructed decision."""
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from file_agent.application import ApplicationOutcomeStatus, FileAgentApplicationService
 from file_agent.domain import PolicyDecision, PolicyOutcome
@@ -14,10 +14,12 @@ from file_agent.policy_engine import policy_decision_event
 
 
 def test_approve_on_genuine_review(
-    service: FileAgentApplicationService, make_source_file: Callable[..., Path]
+    service: FileAgentApplicationService,
+    managed_root_id: UUID,
+    make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     assert item.policy_outcome is PolicyOutcome.REVIEW
 
     result = service.approve_review(item.policy_decision_id)
@@ -27,10 +29,12 @@ def test_approve_on_genuine_review(
 
 
 def test_skip_on_genuine_review(
-    service: FileAgentApplicationService, make_source_file: Callable[..., Path]
+    service: FileAgentApplicationService,
+    managed_root_id: UUID,
+    make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     result = service.skip_review(item.policy_decision_id)
 
@@ -38,10 +42,12 @@ def test_skip_on_genuine_review(
 
 
 def test_auto_cannot_be_reviewed(
-    service: FileAgentApplicationService, make_source_file: Callable[..., Path]
+    service: FileAgentApplicationService,
+    managed_root_id: UUID,
+    make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     assert item.policy_outcome is PolicyOutcome.AUTO
 
     result = service.approve_review(item.policy_decision_id)
@@ -52,11 +58,12 @@ def test_auto_cannot_be_reviewed(
 
 def test_block_cannot_be_reviewed(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     blocked = PolicyDecision(
         proposal_id=item.proposal_id,
         file_id=item.file_id,
@@ -78,10 +85,12 @@ def test_block_cannot_be_reviewed(
 
 
 def test_duplicate_same_decision_rejected(
-    service: FileAgentApplicationService, make_source_file: Callable[..., Path]
+    service: FileAgentApplicationService,
+    managed_root_id: UUID,
+    make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     first = service.approve_review(item.policy_decision_id)
     assert first.status is ApplicationOutcomeStatus.SUCCEEDED
@@ -92,10 +101,12 @@ def test_duplicate_same_decision_rejected(
 
 
 def test_conflicting_decision_rejected(
-    service: FileAgentApplicationService, make_source_file: Callable[..., Path]
+    service: FileAgentApplicationService,
+    managed_root_id: UUID,
+    make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     first = service.approve_review(item.policy_decision_id)
     assert first.status is ApplicationOutcomeStatus.SUCCEEDED

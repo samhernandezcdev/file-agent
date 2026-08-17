@@ -5,7 +5,7 @@ via RecoveryEngine -- the caller supplies only a transaction_id."""
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -33,12 +33,13 @@ from .conftest import FailOnEventType
 
 def _apply_auto(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
     name: str,
     content: bytes,
 ) -> tuple[Path, ApplyResult]:
     make_source_file(name, content=content)
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     result = service.apply_item(item.policy_decision_id)
     assert result.status is ApplicationOutcomeStatus.SUCCEEDED
     return result.destination_path, result
@@ -46,11 +47,12 @@ def _apply_auto(
 
 def test_genuine_successful_transaction_undoes(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     destination, apply_result = _apply_auto(
-        service, make_source_file, "report.pdf", b"pdf content"
+        service, managed_root_id, make_source_file, "report.pdf", b"pdf content"
     )
 
     result = service.undo_transaction(apply_result.transaction_id)
@@ -64,10 +66,11 @@ def test_genuine_successful_transaction_undoes(
 
 def test_non_successful_transaction_rejected(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     _destination, apply_result = _apply_auto(
-        service, make_source_file, "report.pdf", b"pdf content"
+        service, managed_root_id, make_source_file, "report.pdf", b"pdf content"
     )
 
     # Re-applying the same (already-moved) policy decision produces a
@@ -96,9 +99,10 @@ def test_requested_without_terminal_cannot_undo(
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
     make_source_file("report.pdf", content=b"pdf content")
-    item = plain_service.analyze_scan().items[0]
+    item = plain_service.analyze_managed_root(managed_root_id).items[0]
 
     failing_store = FailOnEventType(
         store,
@@ -108,9 +112,7 @@ def test_requested_without_terminal_cannot_undo(
             EventType.TRANSACTION_FAILED,
         },
     )
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
     with pytest.raises(TerminalPersistenceError) as excinfo:
         failing_service.apply_item(item.policy_decision_id)
     transaction_id = excinfo.value.result.transaction_id
@@ -124,11 +126,12 @@ def test_requested_without_terminal_cannot_undo(
 
 def test_conflicting_terminal_history_fails_closed(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     destination, apply_result = _apply_auto(
-        service, make_source_file, "report.pdf", b"pdf content"
+        service, managed_root_id, make_source_file, "report.pdf", b"pdf content"
     )
     transaction_id = apply_result.transaction_id
 
@@ -162,10 +165,11 @@ def test_conflicting_terminal_history_fails_closed(
 
 def test_current_destination_changed_propagates_safe_rejection(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     destination, apply_result = _apply_auto(
-        service, make_source_file, "report.pdf", b"pdf content"
+        service, managed_root_id, make_source_file, "report.pdf", b"pdf content"
     )
     destination.write_bytes(b"tampered content, different length entirely")
 
@@ -178,11 +182,12 @@ def test_current_destination_changed_propagates_safe_rejection(
 
 def test_recovery_requested_persisted_before_commit_terminal_after(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     _destination, apply_result = _apply_auto(
-        service, make_source_file, "report.pdf", b"pdf content"
+        service, managed_root_id, make_source_file, "report.pdf", b"pdf content"
     )
 
     result = service.undo_transaction(apply_result.transaction_id)
@@ -200,15 +205,14 @@ def test_undo_requested_persist_failure_prevents_commit(
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
     destination, apply_result = _apply_auto(
-        plain_service, make_source_file, "report.pdf", b"pdf content"
+        plain_service, managed_root_id, make_source_file, "report.pdf", b"pdf content"
     )
 
     failing_store = FailOnEventType(store, {EventType.RECOVERY_REQUESTED})
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     with pytest.raises(Exception) as excinfo:
         failing_service.undo_transaction(apply_result.transaction_id)
@@ -223,9 +227,10 @@ def test_undo_terminal_persist_failure_raises_with_real_result(
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
     destination, apply_result = _apply_auto(
-        plain_service, make_source_file, "report.pdf", b"pdf content"
+        plain_service, managed_root_id, make_source_file, "report.pdf", b"pdf content"
     )
 
     failing_store = FailOnEventType(
@@ -236,9 +241,7 @@ def test_undo_terminal_persist_failure_raises_with_real_result(
             EventType.RECOVERY_FAILED,
         },
     )
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     with pytest.raises(TerminalPersistenceError) as excinfo:
         failing_service.undo_transaction(apply_result.transaction_id)

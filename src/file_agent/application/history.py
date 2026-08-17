@@ -57,6 +57,11 @@ class BatchHistoryEntry:
     """None iff status is INCOMPLETE."""
     status: BatchStatus
     requested_policy_decision_ids: tuple[UUID, ...]
+    managed_root_id: UUID | None
+    """FA-015: cross-verified (not merely copied) against every selected
+    id's independently-resolvable lineage -- see _reconstruct_batch's step
+    2. None for a legacy pre-FA-015 batch, in which case no cross-check is
+    ever attempted (never retroactively inferred)."""
     selected_count: int
     applied_count: int
     not_applied_count: int
@@ -92,6 +97,7 @@ def batch_apply_started_event(
     batch_id: UUID,
     requested_policy_decision_ids: Sequence[UUID],
     started_at: datetime,
+    managed_root_id: UUID | None,
 ) -> DomainEvent:
     return DomainEvent(
         event_type=EventType.BATCH_APPLY_STARTED,
@@ -103,6 +109,9 @@ def batch_apply_started_event(
             "requested_policy_decision_ids": [
                 str(pid) for pid in requested_policy_decision_ids
             ],
+            "managed_root_id": (
+                str(managed_root_id) if managed_root_id is not None else None
+            ),
         },
     )
 
@@ -185,6 +194,16 @@ def _parse_requested_ids(event: DomainEvent) -> tuple[UUID, ...]:
     return tuple(
         UUID(str(pid)) for pid in event.payload["requested_policy_decision_ids"]
     )
+
+
+def _parse_managed_root_id(event: DomainEvent) -> UUID | None:
+    """.get, not [], and defaults to None -- a legacy pre-FA-015
+    BATCH_APPLY_STARTED payload simply has no "managed_root_id" key at
+    all, exactly the same optional-payload-key pattern batch_id/
+    policy_decision_id reconstruction already uses elsewhere
+    (queries._parse_transaction_result)."""
+    raw = event.payload.get("managed_root_id")
+    return None if raw is None else UUID(str(raw))
 
 
 def _parse_item_record(event: DomainEvent) -> _ParsedItemRecord:
@@ -282,11 +301,47 @@ def _reconstruct_batch(
         return _malformed(batch_id, exc)
 
     try:
+        managed_root_id = _parse_managed_root_id(started_event)
+    except (ValueError, TypeError) as exc:
+        return _malformed(batch_id, exc)
+
+    try:
         records = [_parse_item_record(e) for e in item_events]
     except (KeyError, ValueError, TypeError) as exc:
         return _malformed(batch_id, exc)
 
-    # Step 2: lineage validation against STARTED -- always performed,
+    # Step 2 (FA-015): batch-root agreement. managed_root_id is an
+    # AGGREGATE CLAIM about the caller-selected set, not a primitive fact
+    # like a timestamp -- cross-verify it against every selected id's
+    # independently-resolvable lineage rather than trusting the persisted
+    # payload value uncritically, the same discipline steps 4/5 below
+    # already apply to checkpoint ownership and terminal-summary agreement.
+    # Skipped entirely for a legacy pre-FA-015 batch (managed_root_id is
+    # None) -- nothing to verify, and a root is never retroactively
+    # inferred for one. An id whose own lineage fails to resolve is simply
+    # skipped here (orthogonal, handled by steps 3-4) -- this step only
+    # ever detects a genuine CONTRADICTION between two independently-known
+    # facts, never incompleteness.
+    if managed_root_id is not None:
+        for requested_id in requested_ids:
+            policy_decision = queries.find_policy_decision(store, requested_id)
+            if isinstance(policy_decision, queries.LookupFailure):
+                continue
+            proposal = queries.find_proposal(store, policy_decision.proposal_id)
+            if isinstance(proposal, queries.LookupFailure):
+                continue
+            discovered = store.get_discovered_file(policy_decision.file_id)
+            if discovered is None or discovered.managed_root_id is None:
+                continue
+            if discovered.managed_root_id != managed_root_id:
+                return queries.LookupFailure(
+                    queries.LookupStatus.MALFORMED,
+                    f"BATCH_APPLY_STARTED claims managed_root_id={managed_root_id} "
+                    f"for batch={batch_id}, but policy_decision_id={requested_id} "
+                    f"resolves to managed_root_id={discovered.managed_root_id}",
+                )
+
+    # Step 3: lineage validation against STARTED -- always performed,
     # regardless of COMPLETED/INCOMPLETE status.
     seen_ids: set[UUID] = set()
     seen_indexes: set[int] = set()
@@ -320,7 +375,7 @@ def _reconstruct_batch(
 
     is_completed = completed_event is not None
 
-    # Step 3: status-dependent completeness.
+    # Step 4: status-dependent completeness.
     if is_completed and len(records) != len(requested_ids):
         return queries.LookupFailure(
             queries.LookupStatus.MALFORMED,
@@ -328,7 +383,7 @@ def _reconstruct_batch(
             f"for {len(requested_ids)} selected ids",
         )
 
-    # Step 4: cross-verification, with ownership validation (round-5
+    # Step 5: cross-verification, with ownership validation (round-5
     # correction 1) -- a resolvable transaction_id is not enough; it must
     # genuinely belong to THIS batch and THIS policy_decision_id.
     effective_items: list[BatchHistoryItem] = []
@@ -369,7 +424,7 @@ def _reconstruct_batch(
 
     counts = _count_statuses(effective_items)
 
-    # Step 5: terminal-summary agreement, COMPLETED batches only.
+    # Step 6: terminal-summary agreement, COMPLETED batches only.
     if is_completed:
         assert completed_event is not None
         try:
@@ -405,6 +460,7 @@ def _reconstruct_batch(
         completed_at=completed_event.timestamp if completed_event is not None else None,
         status=BatchStatus.COMPLETED if is_completed else BatchStatus.INCOMPLETE,
         requested_policy_decision_ids=requested_ids,
+        managed_root_id=managed_root_id,
         selected_count=len(requested_ids),
         applied_count=counts["applied"],
         not_applied_count=counts["not_applied"],

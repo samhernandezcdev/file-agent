@@ -16,11 +16,14 @@ repositories, or construct any of the following directly:
 
 No public method on FileAgentApplicationService accepts any of the above as
 a parameter. Every mutating method (apply_item, undo_transaction,
-restore_capture, approve_review, skip_review) takes only a stable,
-previously-persisted UUID identifier (plus an optional free-text note for
-review actions) -- never a path, hash, or evidence object. analyze_scan/
-analyze_file are the only methods that touch a filesystem concern at all,
-and only as a read-side observation input, never as an authorization claim.
+restore_capture, approve_review, skip_review, remove_managed_root) takes
+only a stable, previously-persisted UUID identifier (plus an optional
+free-text note for review actions) -- never a path, hash, or evidence
+object. The one deliberate exception is add_managed_root, the sole public
+method anywhere that accepts a raw filesystem path (see "Managed Roots"
+below). analyze_managed_root/analyze_file are the only methods that touch a
+filesystem concern for an already-registered root, and only as a read-side
+observation input, never as an authorization claim.
 
 Evidence objects (CompletedMoveEvidence/VaultCaptureEvidence) are
 constructed ONLY internally, via their own `from_transaction_result`/
@@ -98,6 +101,47 @@ reconstruction path, so a list row is never less authoritative than the
 detail view -- only less verbose; a malformed/ambiguous historical batch
 renders as UnavailableBatchHistoryRow rather than fabricated counts or a
 silently dropped row.
+
+=== Managed Roots (FA-015) -- the filesystem authority boundary ===
+
+FileAgent may only analyze/organize files inside an explicitly registered,
+currently-active ManagedRoot. add_managed_root(path) is the ONLY public
+method anywhere in this package that accepts a raw filesystem path; every
+other method (analyze_managed_root, create_organization_plan, apply_item,
+apply_items, remove_managed_root, list_managed_roots, undo_transaction,
+restore_capture) takes only a previously-persisted UUID and re-derives its
+own root authority from that id -- a caller-supplied path can never
+substitute for a persisted ManagedRoot lookup during any authorization or
+mutation decision.
+
+file_agent.application.managed_roots._resolve_safe_managed_root is the ONE
+shared primitive that turns a persisted ManagedRoot.path into an
+operational SandboxRoot, used identically by every one of the call sites
+above (see that module's own docstring for the full call-site table and the
+live-reinspection rationale). Registration-time success only proves a path
+was safe ONCE; every later use re-derives that proof FRESH, because an
+ancestor directory of an already-registered root can be turned into a
+symlink/junction after registration, silently redirecting authority to a
+different physical tree -- a bare, cached, or registration-time-only check
+would miss exactly that. tests/application/test_managed_root_ast_guardrail.py
+is the structural guardrail proving no application code outside that one
+function ever calls SandboxRoot.from_path directly on a ManagedRoot-derived
+path.
+
+Residual TOCTOU window (documented here per the same convention as
+transaction_engine's and vault_engine's own accepted-race notes; full detail
+in managed_roots.py's module docstring): _resolve_safe_managed_root's checks
+are fail-closed and point-in-time, not an atomic filesystem snapshot. FA-015
+does not introduce Windows File IDs, directory handles held open across the
+check-then-use sequence, USN-journal tracking, or a global filesystem lock
+to close this window -- doing so is explicitly out of scope, consistent with
+every other residual race already accepted elsewhere in this codebase.
+
+Undo/restore remain governed by RecoveryEngine's own independent live
+re-verification regardless of a root's current registration state -- a
+removed-but-still-resolvable historical root does not itself authorize
+undo/restore; RecoveryEngine still independently re-checks hash/size/
+containment before reversing anything.
 """
 
 from file_agent.application.dto import (

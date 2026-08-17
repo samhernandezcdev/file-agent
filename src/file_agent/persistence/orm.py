@@ -9,7 +9,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import JSON as SA_JSON
-from sqlalchemy import CheckConstraint, ForeignKey, Index, String
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.types import TypeDecorator
 
@@ -94,6 +94,14 @@ class FileObservationRow(Base):
     discovered_by_scan_id: Mapped[UUID | None] = mapped_column(
         GUIDText, ForeignKey("scans.id"), nullable=True
     )
+    managed_root_id: Mapped[UUID | None] = mapped_column(
+        GUIDText, ForeignKey("managed_roots.id"), nullable=True
+    )
+    """FA-015: nullable because every row created before the FA-015 migration
+    permanently has no ManagedRoot lineage -- never retroactively backfilled
+    (see application/managed_roots.py's module docstring). Set exactly once,
+    at insert time, by DirectoryScanner's caller -- never mutated afterward
+    (the codebase's only UPDATE against this table touches sha256 alone)."""
 
     __table_args__ = (
         CheckConstraint("size_bytes >= 0", name="ck_file_observations_size_nonneg"),
@@ -103,6 +111,43 @@ class FileObservationRow(Base):
         ),
         Index("ix_file_observations_scan_id", "discovered_by_scan_id"),
         Index("ix_file_observations_path", "path"),
+        Index("ix_file_observations_managed_root_id", "managed_root_id"),
+    )
+
+
+class ManagedRootRow(Base):
+    """FA-015. Dedicated table, not event-sourced -- durable current
+    configuration, queried on nearly every application/ call
+    (analyze/plan/apply/list), which the generic event log would serve
+    strictly worse. Soft-delete only (`removed_at`) -- a row is never
+    hard-deleted and an id is never reused, so historical `managed_root_id`
+    lineage in file_observations always resolves to something even for a
+    long-removed root. See application/managed_roots.py for the full
+    validation/resolution logic this table backs.
+    """
+
+    __tablename__ = "managed_roots"
+
+    id: Mapped[UUID] = mapped_column(GUIDText, primary_key=True)
+    path: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTimeText, nullable=False)
+    removed_at: Mapped[datetime | None] = mapped_column(UTCDateTimeText, nullable=True)
+
+    __table_args__ = (
+        # Partial unique index: defense-in-depth against a race between two
+        # concurrent add_managed_root calls (the primary mechanism is a
+        # store-scoped lock, mirroring _review_lock_for). Deliberately scoped
+        # to active rows only (removed_at IS NULL) so a removed root's path
+        # can coexist with a new active registration of the same path --
+        # application-level validation (see managed_roots.py) is the actual,
+        # richer enforcement (this index alone cannot express Windows
+        # canonical-path equivalence, overlap, or breadth-policy rules).
+        Index(
+            "ux_managed_roots_active_path",
+            "path",
+            unique=True,
+            sqlite_where=text("removed_at IS NULL"),
+        ),
     )
 
 

@@ -32,6 +32,14 @@ class DiscoveredFile(BaseModel):
     modified_at: datetime
     discovered_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     discovered_by_scan_id: UUID | None = None
+    managed_root_id: UUID | None = None
+    """FA-015: which ManagedRoot this file was discovered under. Set exactly
+    once, at construction (by the scanner), never mutated afterward -- the
+    single source of truth every other component (proposal, policy,
+    transaction, vault capture, batch, undo/restore) derives root lineage
+    from via file_id, never stored redundantly elsewhere. None only for
+    observations created before the FA-015 migration (permanently so; never
+    retroactively backfilled)."""
 
     _validate_path = field_validator("path")(ensure_absolute_path)
     _validate_created_at = field_validator("created_at")(normalize_to_utc)

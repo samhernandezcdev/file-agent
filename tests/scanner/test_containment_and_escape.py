@@ -2,6 +2,7 @@
 
 import subprocess
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -34,7 +35,7 @@ def test_file_symlink_escaping_sandbox(tmp_path: Path, sandbox_dir: Path) -> Non
     _make_symlink(link, outside_target, target_is_directory=False)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert result.files == ()
     assert result.scan_run.status == ScanStatus.COMPLETED
@@ -53,7 +54,7 @@ def test_directory_symlink_escaping_sandbox(tmp_path: Path, sandbox_dir: Path) -
     _make_symlink(link, outside_dir, target_is_directory=True)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert result.files == ()
     escape_issues = [
@@ -70,7 +71,7 @@ def test_symlink_targeting_inside_sandbox_not_followed(sandbox_dir: Path) -> Non
     _make_symlink(link, real_dir, target_is_directory=True)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert {f.filename for f in result.files} == {"inside.txt"}
     info_issues = [
@@ -88,7 +89,7 @@ def test_junction_escaping_sandbox(tmp_path: Path, sandbox_dir: Path) -> None:
     _make_junction(link, outside_dir)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     escape_issues = [
         i for i in result.issues if i.issue_type == ScanIssueType.SANDBOX_ESCAPE_ATTEMPT
@@ -105,7 +106,7 @@ def test_junction_targeting_inside_sandbox_not_followed(sandbox_dir: Path) -> No
     _make_junction(link, real_dir)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     junction_issues = [
         i for i in result.issues if i.issue_type == ScanIssueType.JUNCTION_NOT_FOLLOWED
@@ -127,7 +128,7 @@ def test_broken_symlink_is_unresolvable_not_escape(
     vanishing_target.unlink()
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     unresolvable = [
         i for i in result.issues if i.issue_type == ScanIssueType.UNRESOLVABLE_REFERENCE

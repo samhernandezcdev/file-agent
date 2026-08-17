@@ -45,6 +45,18 @@ class ApplicationRejectionReason(str, Enum):
     POLICY_BLOCK = "policy_block"
     POLICY_REVIEW_WITHOUT_APPROVAL = "policy_review_without_approval"
     REVIEW_OUTCOME_IS_SKIP = "review_outcome_is_skip"
+    MANAGED_ROOT_NOT_ACTIVE = "managed_root_not_active"
+    """FA-015: the file's owning ManagedRoot is not currently active/live-safe
+    -- either removed, or _resolve_safe_managed_root currently fails for it
+    (missing/renamed/unsafe, including a since-hijacked ancestor). Used by
+    apply_item/apply_items (via _apply_one's per-item re-check) and
+    analyze_file."""
+    HISTORICAL_ROOT_UNAVAILABLE = "historical_root_unavailable"
+    """FA-015: undo_transaction/restore_capture could not resolve a live,
+    safe historical root for this file -- no managed_root_id lineage at all
+    (legacy pre-FA-015 data), a missing ManagedRootRow, or a currently
+    unresolvable/unsafe path. Never distinguished further at this level --
+    see _resolve_historical_root."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,3 +190,10 @@ class BatchApplyResult:
     requested_policy_decision_ids: tuple[UUID, ...]
     items: tuple[BatchApplyItemResult, ...]
     summary: BatchApplySummary
+    managed_root_id: UUID | None
+    """FA-015: the single ManagedRoot every selected id agreed on, resolved
+    once at batch-start from lineage (never a caller-supplied value). None
+    only if every selected id failed lineage resolution entirely -- an
+    aggregate fact about the caller-selected set, persisted explicitly in
+    BATCH_APPLY_STARTED's payload since it is not otherwise re-derivable
+    without redoing the same Mixed-root check."""

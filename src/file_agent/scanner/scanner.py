@@ -40,9 +40,14 @@ class DirectoryScanner:
     """Recursively discovers files inside a SandboxRoot without modifying the filesystem."""
 
     def __init__(
-        self, sandbox_root: SandboxRoot, *, clock: Callable[[], datetime] = _utc_now
+        self,
+        sandbox_root: SandboxRoot,
+        managed_root_id: UUID,
+        *,
+        clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         self._sandbox_root = sandbox_root
+        self._managed_root_id = managed_root_id
         self._clock = clock
         self._scan_id: UUID | None = None
 
@@ -256,6 +261,7 @@ class DirectoryScanner:
             modified_at=modified_at,
             discovered_at=self._clock(),
             discovered_by_scan_id=self._scan_id,
+            managed_root_id=self._managed_root_id,
         )
 
     def _build_event(self, discovered: DiscoveredFile) -> DomainEvent:
@@ -283,6 +289,6 @@ class DirectoryScanner:
         )
 
 
-def scan_sandbox(sandbox_root: SandboxRoot) -> ScanResult:
-    """Convenience entry point: ``DirectoryScanner(sandbox_root).run()``."""
-    return DirectoryScanner(sandbox_root).run()
+def scan_sandbox(sandbox_root: SandboxRoot, managed_root_id: UUID) -> ScanResult:
+    """Convenience entry point: ``DirectoryScanner(sandbox_root, managed_root_id).run()``."""
+    return DirectoryScanner(sandbox_root, managed_root_id).run()

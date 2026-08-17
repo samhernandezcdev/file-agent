@@ -15,6 +15,7 @@ reaches any except clause, session.begin()'s rollback has already run, for
 either kind of exception, guaranteed by `with`'s unwind order.
 """
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError, OperationalError
@@ -25,6 +26,7 @@ from file_agent.domain import (
     DomainEvent,
     EntityType,
     EventType,
+    ManagedRoot,
     ScanRun,
 )
 from file_agent.hasher import HashSuccess
@@ -118,6 +120,68 @@ class FileAgentStore:
                 return outcome is EventInsertOutcome.NEW
         except IntegrityError as exc:
             raise IntegrityConstraintError(str(exc)) from exc
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(str(exc)) from exc
+        finally:
+            session.close()
+
+    def record_managed_root(self, managed_root: ManagedRoot) -> None:
+        """Inserts a new ManagedRootRow. Raises IntegrityConstraintError if
+        the partial unique index (active-path uniqueness, orm.py) is
+        violated by a race with a concurrent add_managed_root -- the primary
+        defense against that race is a store-scoped lock at the application
+        layer; this is the last-resort backstop."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                repositories.insert_managed_root(
+                    session, mapping.managed_root_to_row(managed_root)
+                )
+        except IntegrityError as exc:
+            raise IntegrityConstraintError(str(exc)) from exc
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(str(exc)) from exc
+        finally:
+            session.close()
+
+    def remove_managed_root(self, managed_root_id: UUID, removed_at: datetime) -> bool:
+        """Sets removed_at unconditionally -- true soft-delete, never a row
+        deletion. Returns False if managed_root_id does not exist at all;
+        the caller (application/service.py) is responsible for deciding
+        whether an already-removed row should be treated as REJECTED
+        (it queries current state first, per managed_roots.py)."""
+        session = self._session_factory()
+        try:
+            with session.begin():
+                rowcount = repositories.update_managed_root_removed_at(
+                    session, id=managed_root_id, removed_at=removed_at
+                )
+                return rowcount > 0
+        except IntegrityError as exc:
+            raise IntegrityConstraintError(str(exc)) from exc
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(str(exc)) from exc
+        finally:
+            session.close()
+
+    def get_managed_root(self, managed_root_id: UUID) -> ManagedRoot | None:
+        session = self._session_factory()
+        try:
+            row = repositories.select_managed_root(session, managed_root_id)
+            return None if row is None else mapping.row_to_managed_root(row)
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(str(exc)) from exc
+        finally:
+            session.close()
+
+    def list_managed_roots(self) -> tuple[ManagedRoot, ...]:
+        """Every ManagedRoot, active and removed alike -- callers filter by
+        `.is_active`/`removed_at` as needed (e.g. registration validation
+        only considers active rows; historical display needs both)."""
+        session = self._session_factory()
+        try:
+            rows = repositories.select_managed_roots(session)
+            return tuple(mapping.row_to_managed_root(row) for row in rows)
         except OperationalError as exc:
             raise DatabaseUnavailableError(str(exc)) from exc
         finally:

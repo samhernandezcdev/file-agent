@@ -110,7 +110,15 @@ class OrganizationPlanSummary:
 class OrganizationPlan:
     id: UUID
     created_at: datetime
-    root_path: Path
+    root_path: Path | None
+    """The owning ManagedRoot's resolved path -- display/snapshot
+    information only. None only in the edge case where every single input
+    id failed lineage resolution (no root to display)."""
+    managed_root_id: UUID | None
+    """FA-015: the single ManagedRoot every input id's lineage agreed on --
+    durable lineage reference, resolved fresh from that lineage, never a
+    caller-supplied value. None only in the same all-issues edge case as
+    root_path."""
     source_policy_decision_ids: tuple[UUID, ...]
     items: tuple[OrganizationPlanItem, ...]
     issues: tuple[PlanIssue, ...]

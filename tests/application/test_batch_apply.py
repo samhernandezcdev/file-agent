@@ -5,6 +5,7 @@ live-verified, in caller order, with best-effort/per-item atomicity."""
 
 from collections.abc import Callable
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -28,13 +29,14 @@ from .conftest import FailOnEventType
 
 def test_batch_happy_path_applies_all_in_order(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
     make_source_file("c.pdf", content=b"c")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     result = service.apply_items(ids)
@@ -54,13 +56,14 @@ def test_batch_happy_path_applies_all_in_order(
 
 def test_batch_partial_success_continues_past_a_rejection(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
     make_source_file("c.pdf", content=b"c")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     # Pre-occupy item[1]'s destination so its own TransactionEngine
@@ -84,12 +87,13 @@ def test_batch_partial_success_continues_past_a_rejection(
 
 def test_batch_review_scenarios_map_correctly(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("approved.exe", content=b"a")
     make_source_file("pending.exe", content=b"b")
     make_source_file("skipped.exe", content=b"c")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     approved, pending, skipped = analysis.items
 
     service.approve_review(approved.policy_decision_id)
@@ -115,11 +119,12 @@ def test_batch_review_scenarios_map_correctly(
 
 def test_batch_rejects_duplicate_ids_before_any_store_interaction(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     dup = analysis.items[0].policy_decision_id
     events_before = store.list_events_by_type(EventType.BATCH_APPLY_STARTED)
 
@@ -148,14 +153,13 @@ def test_started_persist_failure_propagates_unwrapped_zero_mutation(
     make_source_file: Callable[..., Path],
 ) -> None:
     source = make_source_file("a.pdf", content=b"a")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     failing_store = FailOnEventType(store, {EventType.BATCH_APPLY_STARTED})
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     with pytest.raises(DatabaseUnavailableError):
         failing_service.apply_items(ids)
@@ -171,14 +175,13 @@ def test_child_requested_persist_failure_stops_batch_with_no_item_result(
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     failing_store = FailOnEventType(store, {EventType.TRANSACTION_REQUESTED})
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     result = failing_service.apply_items(ids)
 
@@ -199,8 +202,9 @@ def test_terminal_persist_failure_reports_real_result_but_no_checkpoint(
     durable history) -- but durable history (get_batch_history, separately
     tested) must never claim BATCH_ITEM_RECORDED for this item."""
     source = make_source_file("a.pdf", content=b"a")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     failing_store = FailOnEventType(
@@ -211,9 +215,7 @@ def test_terminal_persist_failure_reports_real_result_but_no_checkpoint(
             EventType.TRANSACTION_FAILED,
         },
     )
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     result = failing_service.apply_items(ids)
 
@@ -241,14 +243,13 @@ def test_checkpoint_persist_failure_still_returns_in_process_result(
     persist failure must not drop the already-known, correct item_result
     from this call's own returned BatchApplyResult."""
     make_source_file("a.pdf", content=b"a")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     failing_store = FailOnEventType(store, {EventType.BATCH_ITEM_RECORDED})
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     result = failing_service.apply_items(ids)
 
@@ -268,14 +269,13 @@ def test_completed_persist_failure_still_returns_every_checkpointed_item(
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     failing_store = FailOnEventType(store, {EventType.BATCH_APPLY_COMPLETED})
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     result = failing_service.apply_items(ids)
 

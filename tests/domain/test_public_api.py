@@ -17,6 +17,7 @@ def test_all_exports_are_importable() -> None:
         "FileProposal",
         "HumanReviewDecision",
         "HumanReviewOutcome",
+        "ManagedRoot",
         "PolicyDecision",
         "PolicyOutcome",
         "RecoveryOperation",

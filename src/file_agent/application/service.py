@@ -11,7 +11,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 from weakref import WeakKeyDictionary
 
-from file_agent.application import history, queries
+from file_agent.application import history, managed_roots, queries
 from file_agent.application.dto import (
     AnalysisFailure,
     AnalyzedItem,
@@ -30,12 +30,20 @@ from file_agent.application.dto import (
 )
 from file_agent.application.errors import (
     EmptyBatchSelectionError,
+    MixedManagedRootsError,
     TerminalPersistenceError,
     reject_duplicate_policy_decision_ids,
 )
 from file_agent.application.history import (
     BatchHistoryEntry,
     UnavailableBatchHistoryRow,
+)
+from file_agent.application.managed_roots import (
+    ManagedRootLookupStatus,
+    ManagedRootPathFailure,
+    ManagedRootUnavailable,
+    ManagedRootView,
+    RemoveManagedRootResult,
 )
 from file_agent.application.organization_plan import OrganizationPlan
 from file_agent.application.planner import build_organization_plan
@@ -106,6 +114,26 @@ def _review_lock_for(store: FileAgentStore) -> threading.Lock:
         if store not in _review_locks:
             _review_locks[store] = threading.Lock()
         return _review_locks[store]
+
+
+# FA-015: a second, separate store-scoped lock for add_managed_root's
+# check-then-insert sequence -- mirrors _review_lock_for exactly, kept
+# distinct rather than shared since registration and review writes are
+# unrelated operations (sharing one lock would add contention between them
+# for no benefit). The partial unique index on managed_roots(path) (orm.py)
+# is the last-resort backstop against a race across OS processes; this lock
+# is the primary, race-free mechanism within one process.
+_registration_locks: "WeakKeyDictionary[FileAgentStore, threading.Lock]" = (
+    WeakKeyDictionary()
+)
+_registration_locks_guard = threading.Lock()
+
+
+def _registration_lock_for(store: FileAgentStore) -> threading.Lock:
+    with _registration_locks_guard:
+        if store not in _registration_locks:
+            _registration_locks[store] = threading.Lock()
+        return _registration_locks[store]
 
 
 def _not_found_or_malformed(
@@ -255,39 +283,138 @@ class FileAgentApplicationService:
     TransactionRequest/HumanReviewDecision/PolicyDecision. See the package
     __init__.py docstring for the complete trust-boundary contract.
 
+    FA-015: no constructor-level SandboxRoot -- FileAgent may only analyze/
+    organize files inside an explicitly registered, currently-active
+    ManagedRoot (add_managed_root/list_managed_roots/remove_managed_root).
+    Every method that needs a live SandboxRoot resolves it fresh, per call,
+    from a persisted ManagedRoot via managed_roots._resolve_safe_managed_root
+    -- never cached, never assumed still valid from a prior call. See
+    application/managed_roots.py's module docstring for the full rationale
+    and the residual TOCTOU window this does not close.
+
     v1 concurrency contract for approve_review/skip_review: same process,
     same FileAgentStore instance -> serialized, race-free (via a store-scoped
     lock, shared by every FileAgentApplicationService built against that
     store). Different processes -> not guaranteed; a resulting duplicate/
     conflicting review history is always detected and fails closed
     (AMBIGUOUS_REVIEW_HISTORY), never resolved by timestamp or UUID
-    ordering.
+    ordering. add_managed_root has the identical v1 concurrency contract via
+    its own separate store-scoped lock.
     """
 
     def __init__(
         self,
-        sandbox_root: SandboxRoot,
         app_paths: AppPaths,
         store: FileAgentStore,
         *,
         clock: Callable[[], datetime] = _utc_now,
     ) -> None:
-        self._sandbox_root = sandbox_root
         self._app_paths = app_paths
         self._store = store
         self._clock = clock
         self._review_lock = _review_lock_for(store)
+        self._registration_lock = _registration_lock_for(store)
+
+    # --- Managed roots -------------------------------------------------------
+
+    def add_managed_root(self, path: Path) -> ManagedRootView:
+        """The only public method anywhere that accepts a raw filesystem
+        path. Raises a ManagedRootRegistrationError subclass on any
+        validation failure -- see managed_roots.register_managed_root for
+        the full ordered rule set."""
+        with self._registration_lock:
+            return managed_roots.register_managed_root(
+                self._store, self._app_paths, path, clock=self._clock
+            )
+
+    def remove_managed_root(self, managed_root_id: UUID) -> RemoveManagedRootResult:
+        """Soft-delete only -- no filesystem mutation, does not undo
+        transactions/history/Vault objects. Idempotent-safe."""
+        return managed_roots.remove_managed_root(
+            self._store, managed_root_id, clock=self._clock
+        )
+
+    def list_managed_roots(self) -> tuple[ManagedRootView, ...]:
+        """Active roots only, each with freshly-computed AVAILABLE/
+        UNAVAILABLE status -- no caching, no continuous health monitoring."""
+        return managed_roots.list_managed_root_views(self._store, self._app_paths)
+
+    def _resolve_active_managed_root(
+        self, managed_root_id: UUID
+    ) -> SandboxRoot | ManagedRootUnavailable:
+        """Shared by analyze_managed_root, apply_items' structural gate, and
+        _apply_one's per-item layer-2 re-check: look up the ManagedRootRow,
+        require it to be currently active (not removed), then re-derive
+        live safety fresh via managed_roots._resolve_safe_managed_root --
+        never a cached/assumed result. Historical fact ("this file was
+        analyzed under root R") and current authority ("R is still managed
+        now, and its lexical path chain is still safe") stay two distinct
+        questions -- this method answers only the second."""
+        managed_root = self._store.get_managed_root(managed_root_id)
+        if managed_root is None or not managed_root.is_active:
+            return ManagedRootUnavailable(
+                managed_root_id,
+                ManagedRootLookupStatus.NOT_FOUND,
+                f"no active managed root with id={managed_root_id}",
+            )
+        outcome = managed_roots._resolve_safe_managed_root(
+            managed_root.path, self._app_paths
+        )
+        if isinstance(outcome, ManagedRootPathFailure):
+            return ManagedRootUnavailable(
+                managed_root_id, ManagedRootLookupStatus.UNAVAILABLE, outcome.detail
+            )
+        return outcome
+
+    def _resolve_historical_root(self, file_id: UUID) -> SandboxRoot | None:
+        """The ONE trusted lineage chain for undo_transaction/restore_capture,
+        never anything else: file_id -> FileObservationRow.managed_root_id ->
+        ManagedRootRow.path -> live managed_roots._resolve_safe_managed_root.
+        Returns None -- never raises, never guesses, never infers from
+        current filesystem state or current ManagedRoot registrations by
+        path-matching -- whenever any link in that chain is unavailable: no
+        DiscoveredFile at all, managed_root_id is None (a pre-FA-015 legacy
+        observation, permanently and expectedly so), the ManagedRootRow
+        itself is missing (structurally shouldn't happen, since rows are
+        never hard-deleted -- fail closed rather than assume), or the live
+        primitive fails (folder gone/renamed/unsafe, including a
+        since-hijacked ancestor). Deliberately does NOT require the root to
+        still be actively registered (unlike _resolve_active_managed_root)
+        -- undo/restore are historically-authorized recovery actions,
+        independent of current registration status; RecoveryEngine's own
+        live re-verification remains the actual safety boundary."""
+        discovered = self._store.get_discovered_file(file_id)
+        if discovered is None or discovered.managed_root_id is None:
+            return None
+        managed_root = self._store.get_managed_root(discovered.managed_root_id)
+        if managed_root is None:
+            return None
+        outcome = managed_roots._resolve_safe_managed_root(
+            managed_root.path, self._app_paths
+        )
+        if isinstance(outcome, ManagedRootPathFailure):
+            return None
+        return outcome
 
     # --- Analysis ----------------------------------------------------------
 
-    def analyze_scan(self) -> AnalyzedScanResult:
-        scan_result = DirectoryScanner(self._sandbox_root, clock=self._clock).run()
+    def analyze_managed_root(
+        self, managed_root_id: UUID
+    ) -> AnalyzedScanResult | ManagedRootUnavailable:
+        root_outcome = self._resolve_active_managed_root(managed_root_id)
+        if isinstance(root_outcome, ManagedRootUnavailable):
+            return root_outcome
+        sandbox_root = root_outcome
+
+        scan_result = DirectoryScanner(
+            sandbox_root, managed_root_id=managed_root_id, clock=self._clock
+        ).run()
         self._store.record_scan(scan_result)
 
         items: list[AnalyzedItem] = []
         failures: list[AnalysisFailure] = []
         for discovered in scan_result.files:
-            outcome = self._analyze_discovered(discovered)
+            outcome = self._analyze_discovered(discovered, sandbox_root)
             if isinstance(outcome, AnalysisFailure):
                 failures.append(outcome)
             else:
@@ -306,6 +433,25 @@ class FileAgentApplicationService:
             return AnalysisFailure(
                 file_id=file_id, path=None, reason_code="file_not_found"
             )
+        if discovered.managed_root_id is None:
+            return AnalysisFailure(
+                file_id=file_id,
+                path=discovered.path,
+                reason_code=ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
+            )
+        root_outcome = self._resolve_active_managed_root(discovered.managed_root_id)
+        if isinstance(root_outcome, ManagedRootUnavailable):
+            # FA-015: re-analyzing a file under a since-removed/unavailable
+            # root would otherwise silently produce a new PolicyDecision
+            # that could never be applied (always rejected later by
+            # _apply_one's own layer-2 check) -- wasted, confusing work
+            # rather than a security gap, but still worth rejecting here.
+            return AnalysisFailure(
+                file_id=file_id,
+                path=discovered.path,
+                reason_code=ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
+            )
+        sandbox_root = root_outcome
         try:
             st = discovered.path.stat()
         except OSError:
@@ -325,14 +471,12 @@ class FileAgentApplicationService:
                 "modified_at": datetime.fromtimestamp(st.st_mtime, tz=UTC),
             }
         )
-        return self._analyze_discovered(fresh)
+        return self._analyze_discovered(fresh, sandbox_root)
 
     def _analyze_discovered(
-        self, discovered: DiscoveredFile
+        self, discovered: DiscoveredFile, sandbox_root: SandboxRoot
     ) -> AnalyzedItem | AnalysisFailure:
-        hash_outcome = FileHasher(self._sandbox_root, clock=self._clock).hash_file(
-            discovered
-        )
+        hash_outcome = FileHasher(sandbox_root, clock=self._clock).hash_file(discovered)
         if isinstance(hash_outcome, HashFailure):
             return AnalysisFailure(
                 file_id=discovered.id,
@@ -441,18 +585,72 @@ class FileAgentApplicationService:
     def apply_item(self, policy_decision_id: UUID) -> ApplyResult:
         return self._apply_one(policy_decision_id, batch_id=None).to_apply_result()
 
-    def apply_items(self, policy_decision_ids: Sequence[UUID]) -> BatchApplyResult:
+    def _resolve_managed_root_id_for_policy_decision(
+        self, policy_decision_id: UUID
+    ) -> UUID | None:
+        """Best-effort lineage resolution for Mixed-root detection only --
+        None if any step fails to resolve; never raises. Deliberately a
+        strict subset of _apply_one's own resolution (policy_decision ->
+        proposal -> discovered_file.managed_root_id only -- no destination
+        resolution, no ExecutionAuthorization, no TransactionEngine call),
+        so this costs only three cheap point-lookups, not the expensive
+        parts of a real apply."""
+        policy_decision = queries.find_policy_decision(self._store, policy_decision_id)
+        if isinstance(policy_decision, queries.LookupFailure):
+            return None
+        proposal = queries.find_proposal(self._store, policy_decision.proposal_id)
+        if isinstance(proposal, queries.LookupFailure):
+            return None
+        discovered = self._store.get_discovered_file(policy_decision.file_id)
+        if discovered is None:
+            return None
+        return discovered.managed_root_id
+
+    def apply_items(
+        self, policy_decision_ids: Sequence[UUID]
+    ) -> BatchApplyResult | ManagedRootUnavailable:
         """Batch intent is NOT batch authorization: every id below walks the
         exact same trusted per-item path _apply_one already walks for
         apply_item -- this method only orchestrates that path N times, in
         caller order, with best-effort/per-item atomicity (a normal business
         rejection continues the batch; only an unreliable audit trail stops
         it early). See the FA-014 design doc §5/§9/§10 for the full
-        rationale this sequencing implements verbatim."""
+        rationale this sequencing implements verbatim.
+
+        FA-015: one batch = one Managed Root. A lightweight pre-pass
+        resolves each selected id's managed_root_id far enough to detect a
+        Mixed-root selection (raises MixedManagedRootsError -- a structural,
+        cross-item consistency problem, before any I/O beyond the pre-pass
+        itself) and to identify the single shared root, whose current
+        liveness is then verified ONCE, structurally, before
+        BATCH_APPLY_STARTED is ever written (the audit-noise-avoiding
+        "layer 1" gate -- _apply_one's own per-item "layer 2" re-check
+        remains the actual, unconditionally load-bearing enforcement, since
+        apply_item bypasses this gate entirely)."""
         frozen = tuple(policy_decision_ids)
         if not frozen:
             raise EmptyBatchSelectionError
         reject_duplicate_policy_decision_ids(frozen)
+
+        roots_seen: set[UUID] = set()
+        for policy_decision_id in frozen:
+            root_id = self._resolve_managed_root_id_for_policy_decision(
+                policy_decision_id
+            )
+            if root_id is not None:
+                roots_seen.add(root_id)
+        if len(roots_seen) > 1:
+            raise MixedManagedRootsError(frozen, roots_seen)
+        shared_managed_root_id = next(iter(roots_seen), None)
+
+        if shared_managed_root_id is not None:
+            root_outcome = self._resolve_active_managed_root(shared_managed_root_id)
+            if isinstance(root_outcome, ManagedRootUnavailable):
+                return root_outcome
+        # else: every id failed lineage resolution entirely -- proceed with
+        # managed_root_id=None; each item will independently fail inside
+        # _apply_one (its own NOT_FOUND/MALFORMED lookups), exactly mirroring
+        # create_organization_plan's identical zero-resolvable-ids handling.
 
         batch_id = uuid4()
         started_at = self._clock()
@@ -460,7 +658,9 @@ class FileAgentApplicationService:
         # happened yet, exactly like apply_item's own REQUESTED-persist-
         # failure rule.
         self._store.record_event(
-            history.batch_apply_started_event(batch_id, frozen, started_at)
+            history.batch_apply_started_event(
+                batch_id, frozen, started_at, shared_managed_root_id
+            )
         )
 
         items: list[BatchApplyItemResult] = []
@@ -481,13 +681,13 @@ class FileAgentApplicationService:
                     _batch_item_result_from_apply_result(input_index, exc.result)
                 )
                 return self._incomplete_batch_result(
-                    batch_id, started_at, frozen, items
+                    batch_id, started_at, frozen, items, shared_managed_root_id
                 )
             except (DatabaseUnavailableError, IntegrityConstraintError):
                 # _apply_one's own pre-mutation persist failed -- nothing
                 # happened for this id, no BatchApplyItemResult to append.
                 return self._incomplete_batch_result(
-                    batch_id, started_at, frozen, items
+                    batch_id, started_at, frozen, items, shared_managed_root_id
                 )
 
             # outcome's authoritative facts are already durably persisted by
@@ -508,7 +708,7 @@ class FileAgentApplicationService:
                 # will not have this checkpoint. Stop -- no further ids.
                 items.append(item_result)
                 return self._incomplete_batch_result(
-                    batch_id, started_at, frozen, items
+                    batch_id, started_at, frozen, items, shared_managed_root_id
                 )
 
             items.append(item_result)
@@ -524,7 +724,9 @@ class FileAgentApplicationService:
         except (DatabaseUnavailableError, IntegrityConstraintError):
             # Every item checkpoint already durably recorded; only the final
             # terminal marker failed to persist.
-            return self._incomplete_batch_result(batch_id, started_at, frozen, items)
+            return self._incomplete_batch_result(
+                batch_id, started_at, frozen, items, shared_managed_root_id
+            )
 
         return BatchApplyResult(
             batch_id=batch_id,
@@ -534,6 +736,7 @@ class FileAgentApplicationService:
             requested_policy_decision_ids=frozen,
             items=tuple(items),
             summary=summary,
+            managed_root_id=shared_managed_root_id,
         )
 
     def _incomplete_batch_result(
@@ -542,6 +745,7 @@ class FileAgentApplicationService:
         started_at: datetime,
         requested_policy_decision_ids: tuple[UUID, ...],
         items: list[BatchApplyItemResult],
+        managed_root_id: UUID | None,
     ) -> BatchApplyResult:
         return BatchApplyResult(
             batch_id=batch_id,
@@ -551,6 +755,7 @@ class FileAgentApplicationService:
             requested_policy_decision_ids=requested_policy_decision_ids,
             items=tuple(items),
             summary=_summarize_batch_items(requested_policy_decision_ids, items),
+            managed_root_id=managed_root_id,
         )
 
     def get_batch_history(
@@ -685,6 +890,41 @@ class FileAgentApplicationService:
                 ApplicationRejectionReason.DISCOVERED_FILE_NOT_FOUND.value,
                 f"no DiscoveredFile with id={policy_decision.file_id}",
             )
+
+        # FA-015 layer 2 (round-1/round-4 design): the actual,
+        # unconditionally load-bearing active-root check -- apply_item is
+        # still-public and bypasses apply_items' own structural gate
+        # entirely, so this re-check must live here to be load-bearing at
+        # all. Re-derives full live safety fresh via
+        # managed_roots._resolve_safe_managed_root every single call --
+        # never assumes a root that was safe a moment ago still is.
+        if discovered.managed_root_id is None:
+            return _ApplyOutcome(
+                policy_decision_id,
+                proposal.id,
+                discovered.id,
+                discovered.filename,
+                ApplicationOutcomeStatus.REJECTED,
+                None,
+                None,
+                ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
+                "file has no managed root lineage (pre-FA-015 legacy data)",
+            )
+        root_outcome = self._resolve_active_managed_root(discovered.managed_root_id)
+        if isinstance(root_outcome, ManagedRootUnavailable):
+            return _ApplyOutcome(
+                policy_decision_id,
+                proposal.id,
+                discovered.id,
+                discovered.filename,
+                ApplicationOutcomeStatus.REJECTED,
+                None,
+                None,
+                ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
+                root_outcome.detail,
+            )
+        sandbox_root = root_outcome
+
         assert proposal.proposed_destination_category is not None, (
             "AUTO and REVIEW+APPROVE both structurally guarantee a proposed "
             "destination -- PolicyEngine never produces AUTO without one, "
@@ -692,7 +932,7 @@ class FileAgentApplicationService:
         )
 
         destination_path = resolve_destination(
-            self._sandbox_root,
+            sandbox_root,
             proposal.proposed_destination_category,
             discovered.filename,
         )
@@ -722,7 +962,7 @@ class FileAgentApplicationService:
             batch_id=batch_id,
         )
 
-        engine = TransactionEngine(self._sandbox_root, clock=self._clock)
+        engine = TransactionEngine(sandbox_root, clock=self._clock)
         outcome = engine.prepare(request, authorization)
         if isinstance(
             outcome, TransactionResult
@@ -819,6 +1059,23 @@ class FileAgentApplicationService:
                 f"original transaction status={lookup.status.value}",
             )
 
+        # FA-015: undo is historically-authorized recovery, independent of
+        # CURRENT root registration status (RecoveryEngine's own live
+        # re-verification remains the actual safety boundary) -- but a live,
+        # safe root must still be resolvable to construct RecoveryEngine at
+        # all. Fails closed, never crashes on legacy managed_root_id=None
+        # data, never infers a root from current filesystem/path state.
+        sandbox_root = self._resolve_historical_root(lookup.file_id)
+        if sandbox_root is None:
+            return UndoResult(
+                transaction_id,
+                None,
+                ApplicationOutcomeStatus.REJECTED,
+                None,
+                ApplicationRejectionReason.HISTORICAL_ROOT_UNAVAILABLE.value,
+                "no resolvable historical root for this transaction's file",
+            )
+
         evidence = CompletedMoveEvidence.from_transaction_result(
             lookup
         )  # internal-only construction
@@ -846,7 +1103,7 @@ class FileAgentApplicationService:
             expected_modified_at=datetime.fromtimestamp(st.st_mtime, tz=UTC),
         )
 
-        engine = RecoveryEngine(self._sandbox_root, self._app_paths, clock=self._clock)
+        engine = RecoveryEngine(sandbox_root, self._app_paths, clock=self._clock)
         outcome = engine.prepare(request)
         if isinstance(outcome, RecoveryResult):
             self._store.record_event(recovery_result_event(outcome))
@@ -920,6 +1177,20 @@ class FileAgentApplicationService:
                 f"capture status={lookup.status.value}",
             )
 
+        # FA-015: restore is historically-authorized recovery, independent
+        # of CURRENT root registration status -- same reasoning and
+        # mechanism as undo_transaction (see there for the full rationale).
+        sandbox_root = self._resolve_historical_root(lookup.file_id)
+        if sandbox_root is None:
+            return RestoreResult(
+                capture_id,
+                None,
+                ApplicationOutcomeStatus.REJECTED,
+                None,
+                ApplicationRejectionReason.HISTORICAL_ROOT_UNAVAILABLE.value,
+                "no resolvable historical root for this file",
+            )
+
         evidence = VaultCaptureEvidence.from_capture_result(
             lookup
         )  # internal-only construction
@@ -930,7 +1201,7 @@ class FileAgentApplicationService:
         # structurally guaranteed by evidence.source_path -- no independent
         # field exists here to override it.
 
-        engine = RecoveryEngine(self._sandbox_root, self._app_paths, clock=self._clock)
+        engine = RecoveryEngine(sandbox_root, self._app_paths, clock=self._clock)
         outcome = engine.prepare(request)
         if isinstance(outcome, RecoveryResult):
             self._store.record_event(recovery_result_event(outcome))
@@ -981,13 +1252,19 @@ class FileAgentApplicationService:
 
     def create_organization_plan(
         self, policy_decision_ids: Sequence[UUID]
-    ) -> OrganizationPlan:
+    ) -> OrganizationPlan | ManagedRootUnavailable:
         """Read-only preview: never mutates, never records a review, never
         constructs an ExecutionAuthorization, never calls TransactionEngine/
         RecoveryEngine. See application/planner.py::build_organization_plan
         and application/organization_plan.py for the full contract. Preview
         is not authorization -- TransactionEngine independently reverifies
-        live state before any mutation apply_item performs."""
+        live state before any mutation apply_item performs.
+
+        FA-015: one plan = one Managed Root, resolved from the input ids'
+        own lineage -- never a caller-supplied root. Raises
+        MixedManagedRootsError if the ids disagree on root; returns
+        ManagedRootUnavailable if the single agreed root is not currently
+        active/live-safe."""
         return build_organization_plan(
-            self._store, self._sandbox_root, policy_decision_ids, clock=self._clock
+            self._store, self._app_paths, policy_decision_ids, clock=self._clock
         )

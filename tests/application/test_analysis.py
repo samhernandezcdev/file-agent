@@ -1,10 +1,10 @@
-"""Analysis flow: analyze_scan()/analyze_file() coordinate DiscoveredFile ->
-FileHasher -> ClassificationResult -> FileProposal -> PolicyDecision without
-the caller ever touching those engines directly."""
+"""Analysis flow: analyze_managed_root()/analyze_file() coordinate
+DiscoveredFile -> FileHasher -> ClassificationResult -> FileProposal ->
+PolicyDecision without the caller ever touching those engines directly."""
 
 from collections.abc import Callable
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -19,11 +19,12 @@ from file_agent.persistence import FileAgentStore
 
 def test_document_produces_auto_end_to_end(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
 
-    result = service.analyze_scan()
+    result = service.analyze_managed_root(managed_root_id)
 
     assert result.files_discovered == 1
     assert result.failures == ()
@@ -36,11 +37,12 @@ def test_document_produces_auto_end_to_end(
 
 def test_unknown_extension_requires_review(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("mystery.xyz123", content=b"???")
 
-    result = service.analyze_scan()
+    result = service.analyze_managed_root(managed_root_id)
 
     assert len(result.items) == 1
     item = result.items[0]
@@ -52,6 +54,7 @@ def test_unknown_extension_requires_review(
 
 def test_hash_failure_produces_analysis_failure_and_scan_continues(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -59,11 +62,11 @@ def test_hash_failure_produces_analysis_failure_and_scan_continues(
     good = make_source_file("good.pdf", content=b"fine")
     vanishing = make_source_file("vanishing.pdf", content=b"gone soon")
 
-    # analyze_scan() persists the full scan (discovering both files) before
-    # hashing any of them -- delete "vanishing.pdf" in that exact gap, via
-    # the seam record_scan() already provides, so the scan genuinely
-    # discovers both files and only the per-file hash step fails for the
-    # one that vanished afterward.
+    # analyze_managed_root() persists the full scan (discovering both files)
+    # before hashing any of them -- delete "vanishing.pdf" in that exact
+    # gap, via the seam record_scan() already provides, so the scan
+    # genuinely discovers both files and only the per-file hash step fails
+    # for the one that vanished afterward.
     real_record_scan = store.record_scan
 
     def _record_scan_then_delete(result: object) -> None:
@@ -72,7 +75,7 @@ def test_hash_failure_produces_analysis_failure_and_scan_continues(
 
     monkeypatch.setattr(store, "record_scan", _record_scan_then_delete)
 
-    result = service.analyze_scan()
+    result = service.analyze_managed_root(managed_root_id)
 
     assert result.files_discovered == 2
     assert len(result.failures) == 1
@@ -83,12 +86,13 @@ def test_hash_failure_produces_analysis_failure_and_scan_continues(
 
 def test_every_analysis_stage_persists_its_event(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
 
-    result = service.analyze_scan()
+    result = service.analyze_managed_root(managed_root_id)
     item = result.items[0]
 
     file_events = store.list_events(EntityType.FILE, item.file_id)
@@ -118,10 +122,11 @@ def test_analyze_file_on_unknown_id_returns_failure_not_exception(
 
 def test_analyze_file_reanalyzes_an_already_discovered_file(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    first_scan = service.analyze_scan()
+    first_scan = service.analyze_managed_root(managed_root_id)
     file_id = first_scan.items[0].file_id
 
     result = service.analyze_file(file_id)

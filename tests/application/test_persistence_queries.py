@@ -5,7 +5,7 @@ plus the new FileAgentStore.list_events_by_type query method."""
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -34,11 +34,12 @@ from .conftest import FailOnEventType
 
 def test_find_proposal_round_trips(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     proposal = queries.find_proposal(store, item.proposal_id)
 
@@ -50,11 +51,12 @@ def test_find_proposal_round_trips(
 
 def test_find_policy_decision_round_trips(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     decision = queries.find_policy_decision(store, item.policy_decision_id)
 
@@ -86,11 +88,12 @@ def test_find_proposal_malformed_payload(store: FileAgentStore) -> None:
 
 def test_find_effective_human_review_none_when_absent(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     result = queries.find_effective_human_review(store, item.policy_decision_id)
 
@@ -131,11 +134,12 @@ def test_find_effective_human_review_ambiguous_on_duplicate_events(
 
 def test_find_transaction_result_ambiguous_on_conflicting_terminals(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     apply_result = service.apply_item(item.policy_decision_id)
     assert apply_result.status is ApplicationOutcomeStatus.SUCCEEDED
     transaction_id = apply_result.transaction_id
@@ -174,9 +178,10 @@ def test_find_transaction_result_incomplete_on_requested_without_terminal(
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
     make_source_file("report.pdf", content=b"pdf content")
-    item = plain_service.analyze_scan().items[0]
+    item = plain_service.analyze_managed_root(managed_root_id).items[0]
 
     failing_store = FailOnEventType(
         store,
@@ -186,9 +191,7 @@ def test_find_transaction_result_incomplete_on_requested_without_terminal(
             EventType.TRANSACTION_FAILED,
         },
     )
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
     with pytest.raises(TerminalPersistenceError) as excinfo:
         failing_service.apply_item(item.policy_decision_id)
     transaction_id = excinfo.value.result.transaction_id
@@ -202,12 +205,13 @@ def test_find_transaction_result_incomplete_on_requested_without_terminal(
 
 def test_list_events_by_type_spans_multiple_entities_ordered(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
     store: FileAgentStore,
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
-    result = service.analyze_scan()
+    result = service.analyze_managed_root(managed_root_id)
     assert len(result.items) == 2
 
     events = store.list_events_by_type(EventType.PROPOSAL_CREATED)

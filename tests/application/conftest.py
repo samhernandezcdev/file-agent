@@ -8,6 +8,7 @@ matching this codebase's established convention.
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -72,10 +73,21 @@ def store(tmp_path: Path) -> Iterator[FileAgentStore]:
 
 
 @pytest.fixture
-def service(
-    sandbox_root: SandboxRoot, app_paths: AppPaths, store: FileAgentStore
-) -> FileAgentApplicationService:
-    return FileAgentApplicationService(sandbox_root, app_paths, store)
+def service(app_paths: AppPaths, store: FileAgentStore) -> FileAgentApplicationService:
+    return FileAgentApplicationService(app_paths, store)
+
+
+@pytest.fixture
+def managed_root_id(
+    service: FileAgentApplicationService, sandbox_root: SandboxRoot
+) -> UUID:
+    """Registers `sandbox_root` as this test's one active ManagedRoot --
+    the FA-015 drop-in replacement for the old bare `analyze_scan()`
+    convenience: tests call `service.analyze_managed_root(managed_root_id)`
+    instead. A separate, dedicated fixture (not folded into `service`
+    itself) so trust-boundary/registration-specific tests can still get a
+    bare `service` with zero pre-registered roots."""
+    return service.add_managed_root(sandbox_root.path).id
 
 
 @pytest.fixture

@@ -5,11 +5,12 @@ Developer/demo utility only -- not product code, not part of the FA-013
 architecture, never imported by anything under src/file_agent/. Exercises
 FileAgentApplicationService's real public API end-to-end:
 
-    seed fixtures -> analyze_scan() -> create_organization_plan(ids) -> render
+    seed fixtures -> add_managed_root() -> analyze_managed_root() ->
+    create_organization_plan(ids) -> render
 
 to prove that API is sufficient to drive a future UI. Never calls a lower-
-level engine directly, never calls apply_item, never moves a real user file.
-Everything happens inside a dedicated, demo-owned directory
+level engine directly, never calls apply_item or its batch counterpart,
+never moves a real user file. Everything happens inside a dedicated, demo-owned directory
 (<repo>/.demo/fileagent-preview/) that this script alone creates and may
 delete -- see main()'s docstring for why that recursive delete is safe here
 and does not belong in file_agent's own production code.
@@ -30,6 +31,7 @@ from sqlalchemy import Engine
 
 from file_agent.application import (
     AnalyzedItem,
+    AnalyzedScanResult,
     FileAgentApplicationService,
     OrganizationPlan,
     OrganizationPlanItem,
@@ -44,7 +46,6 @@ from file_agent.persistence import (
 )
 from file_agent.persistence.orm import Base
 from file_agent.presentation import es
-from file_agent.scanner import SandboxRoot
 
 DEMO_ROOT = Path(__file__).resolve().parent.parent / ".demo" / "fileagent-preview"
 SANDBOX_DIRNAME = "sandbox"
@@ -98,9 +99,7 @@ def _snapshot(sandbox_path: Path) -> dict[Path, bytes]:
     }
 
 
-def _build_service(
-    sandbox_root: SandboxRoot, app_paths: AppPaths
-) -> tuple[FileAgentApplicationService, Engine]:
+def _build_service(app_paths: AppPaths) -> tuple[FileAgentApplicationService, Engine]:
     """Returns the SQLAlchemy Engine alongside the service so the caller can
     dispose() it before any cleanup -- on Windows, an undisposed engine
     holds the sqlite file open, which would otherwise make the final
@@ -108,7 +107,7 @@ def _build_service(
     engine, session_factory = create_engine_and_session_factory(app_paths)
     Base.metadata.create_all(engine)
     store = FileAgentStore(session_factory)
-    return FileAgentApplicationService(sandbox_root, app_paths, store), engine
+    return FileAgentApplicationService(app_paths, store), engine
 
 
 def _relative(path: Path | None, root: Path) -> str:
@@ -279,23 +278,30 @@ def main() -> None:
 
     _seed_fixtures(sandbox_path)
 
-    sandbox_root = SandboxRoot.from_path(sandbox_path)
     app_paths = AppPaths.from_root(appdata_path)
-    service, engine = _build_service(sandbox_root, app_paths)
+    service, engine = _build_service(app_paths)
 
     try:
+        managed_root = service.add_managed_root(sandbox_path)
+
         before = _snapshot(sandbox_path)
 
-        analysis = service.analyze_scan()
+        analysis = service.analyze_managed_root(managed_root.id)
+        assert isinstance(analysis, AnalyzedScanResult), (
+            f"demo's own freshly-registered root must always be analyzable: {analysis!r}"
+        )
         policy_decision_ids: list[UUID] = [
             item.policy_decision_id for item in analysis.items
         ]
         plan = service.create_organization_plan(policy_decision_ids)
+        assert isinstance(plan, OrganizationPlan), (
+            f"demo's own freshly-analyzed ids must always build a plan: {plan!r}"
+        )
 
         after = _snapshot(sandbox_path)
         assert before == after, (
             "OrganizationPlan creation must never mutate a managed file, but "
-            "the snapshot before/after analyze_scan()+create_organization_plan() "
+            "the snapshot before/after analyze_managed_root()+create_organization_plan() "
             "differs"
         )
 
@@ -308,6 +314,9 @@ def main() -> None:
             # SAME policy_decision_ids -- a new snapshot of the same
             # lineage, never a "latest scan" re-derivation.
             second_plan = service.create_organization_plan(policy_decision_ids)
+            assert isinstance(second_plan, OrganizationPlan), (
+                f"rebuilding with the same ids must always build a plan: {second_plan!r}"
+            )
             after_second = _snapshot(sandbox_path)
             assert before_second == after_second, (
                 "rebuilding the plan after approve_review() must never "

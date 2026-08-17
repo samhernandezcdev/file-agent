@@ -3,6 +3,7 @@
 import stat
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -35,7 +36,7 @@ def test_unclassified_reparse_point_skipped_and_not_discovered(
     monkeypatch.setattr(ScannerClass, "_stat_entry", fake_stat_entry)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert result.files == ()
     unsupported = [
@@ -60,6 +61,6 @@ def test_directory_symlink_to_own_parent_does_not_loop(sandbox_dir: Path) -> Non
         )
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert {f.filename for f in result.files} == {"file.txt"}

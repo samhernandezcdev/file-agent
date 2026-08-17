@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -14,7 +15,7 @@ def test_one_event_per_discovered_file(sandbox_dir: Path) -> None:
     (sandbox_dir / "b.txt").write_text("b")
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert len(result.events) == len(result.files) == 2
     for event in result.events:
@@ -34,7 +35,7 @@ def test_no_events_for_skipped_entries(sandbox_dir: Path, tmp_path: Path) -> Non
         )
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert result.events == ()
 
@@ -42,7 +43,7 @@ def test_no_events_for_skipped_entries(sandbox_dir: Path, tmp_path: Path) -> Non
 def test_event_entity_id_matches_discovered_file(sandbox_dir: Path) -> None:
     (sandbox_dir / "a.txt").write_text("a")
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     discovered = result.files[0]
     event = result.events[0]
@@ -52,7 +53,7 @@ def test_event_entity_id_matches_discovered_file(sandbox_dir: Path) -> None:
 def test_event_payload_is_minimal_and_json_serializable(sandbox_dir: Path) -> None:
     (sandbox_dir / "a.txt").write_text("a")
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     event = result.events[0]
     json.dumps(dict(event.payload))

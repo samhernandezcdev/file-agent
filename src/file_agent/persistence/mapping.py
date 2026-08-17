@@ -13,11 +13,17 @@ from file_agent.domain import (
     DomainEvent,
     EntityType,
     EventType,
+    ManagedRoot,
     ScanRun,
     ScanStatus,
 )
 from file_agent.persistence.errors import MappingError
-from file_agent.persistence.orm import DomainEventRow, FileObservationRow, ScanRow
+from file_agent.persistence.orm import (
+    DomainEventRow,
+    FileObservationRow,
+    ManagedRootRow,
+    ScanRow,
+)
 
 
 def scan_to_row(scan: ScanRun) -> ScanRow:
@@ -57,6 +63,7 @@ def discovered_file_to_row(discovered: DiscoveredFile) -> FileObservationRow:
         modified_at=discovered.modified_at,
         discovered_at=discovered.discovered_at,
         discovered_by_scan_id=discovered.discovered_by_scan_id,
+        managed_root_id=discovered.managed_root_id,
     )
 
 
@@ -71,10 +78,34 @@ def row_to_discovered_file(row: FileObservationRow) -> DiscoveredFile:
             modified_at=row.modified_at,
             discovered_at=row.discovered_at,
             discovered_by_scan_id=row.discovered_by_scan_id,
+            managed_root_id=row.managed_root_id,
         )
     except (ValueError, ValidationError) as exc:
         raise MappingError(
             f"failed to reconstruct DiscoveredFile from row id={row.id}: {exc}"
+        ) from exc
+
+
+def managed_root_to_row(managed_root: ManagedRoot) -> ManagedRootRow:
+    return ManagedRootRow(
+        id=managed_root.id,
+        path=str(managed_root.path),
+        created_at=managed_root.created_at,
+        removed_at=managed_root.removed_at,
+    )
+
+
+def row_to_managed_root(row: ManagedRootRow) -> ManagedRoot:
+    try:
+        return ManagedRoot(
+            id=row.id,
+            path=Path(row.path),
+            created_at=row.created_at,
+            removed_at=row.removed_at,
+        )
+    except (ValueError, ValidationError) as exc:
+        raise MappingError(
+            f"failed to reconstruct ManagedRoot from row id={row.id}: {exc}"
         ) from exc
 
 

@@ -5,6 +5,7 @@ FA-012's own provenance discipline."""
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 from file_agent.application import (
     ApplicationOutcomeStatus,
@@ -26,6 +27,7 @@ from file_agent.scanner import SandboxRoot
 
 def test_plan_for_older_generation_uses_its_own_snapshot_never_the_latest(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
@@ -38,7 +40,7 @@ def test_plan_for_older_generation_uses_its_own_snapshot_never_the_latest(
     source = make_source_file(
         "report.txt", content=b"generation one content, classified as documents"
     )
-    first = service.analyze_scan()
+    first = service.analyze_managed_root(managed_root_id)
     old_item = first.items[0]
 
     # Generation 2: different content, still a DOCUMENT (same destination
@@ -65,6 +67,7 @@ def test_plan_for_older_generation_uses_its_own_snapshot_never_the_latest(
 
 def test_plan_never_mixes_older_generation_ids_with_a_newer_generations_category_or_destination(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
@@ -79,7 +82,7 @@ def test_plan_never_mixes_older_generation_ids_with_a_newer_generations_category
     policy_decision_id's own lineage (e.g. a "latest proposal for this
     file_id" lookup)."""
     source = make_source_file("report.txt", content=b"generation one content")
-    file_id = service.analyze_scan().items[0].file_id
+    file_id = service.analyze_managed_root(managed_root_id).items[0].file_id
     now = datetime.now(UTC)
 
     proposal_1 = FileProposal(
@@ -213,11 +216,12 @@ def test_planner_never_looks_up_by_file_id() -> None:
 
 def test_stale_ready_plan_is_immutable_and_apply_is_safely_rejected(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("invoice.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     plan = service.create_organization_plan([item.policy_decision_id])
     assert plan.items[0].status is PlanStatus.READY

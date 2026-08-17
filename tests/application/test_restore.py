@@ -39,12 +39,19 @@ def _capture(
     sandbox_root: SandboxRoot,
     app_paths: AppPaths,
     store: FileAgentStore,
+    file_id: UUID,
     source: Path,
     content: bytes,
 ) -> UUID:
+    """`file_id` must be a genuine, already-persisted DiscoveredFile id
+    (FA-015: restore_capture resolves its historical root via
+    file_id -> FileObservationRow.managed_root_id -- a capture for an
+    unknown file_id has no lineage to resolve and would fail closed with
+    HISTORICAL_ROOT_UNAVAILABLE, which is correct but not what these tests
+    are exercising)."""
     st = source.stat()
     request = VaultCaptureRequest(
-        file_id=uuid4(),
+        file_id=file_id,
         source_path=source,
         expected_size=st.st_size,
         expected_created_at=datetime.fromtimestamp(st.st_ctime, tz=UTC),
@@ -60,6 +67,7 @@ def _capture(
 
 def test_genuine_capture_restores(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     app_paths: AppPaths,
     store: FileAgentStore,
@@ -67,7 +75,8 @@ def test_genuine_capture_restores(
 ) -> None:
     content = b"vault-backed content"
     source = make_source_file("report.txt", content=content)
-    capture_id = _capture(sandbox_root, app_paths, store, source, content)
+    file_id = service.analyze_managed_root(managed_root_id).items[0].file_id
+    capture_id = _capture(sandbox_root, app_paths, store, file_id, source, content)
     source.unlink()
 
     result = service.restore_capture(capture_id)
@@ -111,6 +120,7 @@ def test_failed_capture_cannot_restore(
 
 def test_corrupted_vault_object_propagates_rejection(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     app_paths: AppPaths,
     store: FileAgentStore,
@@ -118,7 +128,8 @@ def test_corrupted_vault_object_propagates_rejection(
 ) -> None:
     content = b"will be corrupted"
     source = make_source_file("report.txt", content=content)
-    capture_id = _capture(sandbox_root, app_paths, store, source, content)
+    file_id = service.analyze_managed_root(managed_root_id).items[0].file_id
+    capture_id = _capture(sandbox_root, app_paths, store, file_id, source, content)
     source.unlink()
 
     vault_object = object_abs_path(app_paths, hashlib.sha256(content).hexdigest())
@@ -133,6 +144,7 @@ def test_corrupted_vault_object_propagates_rejection(
 
 def test_recovery_event_ordering(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     app_paths: AppPaths,
     store: FileAgentStore,
@@ -140,7 +152,8 @@ def test_recovery_event_ordering(
 ) -> None:
     content = b"ordering check"
     source = make_source_file("report.txt", content=content)
-    capture_id = _capture(sandbox_root, app_paths, store, source, content)
+    file_id = service.analyze_managed_root(managed_root_id).items[0].file_id
+    capture_id = _capture(sandbox_root, app_paths, store, file_id, source, content)
     source.unlink()
 
     result = service.restore_capture(capture_id)
@@ -158,15 +171,16 @@ def test_restore_requested_persist_failure_prevents_commit(
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
     content = b"prevent commit"
     source = make_source_file("report.txt", content=content)
-    capture_id = _capture(sandbox_root, app_paths, store, source, content)
+    file_id = plain_service.analyze_managed_root(managed_root_id).items[0].file_id
+    capture_id = _capture(sandbox_root, app_paths, store, file_id, source, content)
     source.unlink()
 
     failing_store = FailOnEventType(store, {EventType.RECOVERY_REQUESTED})
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     with pytest.raises(Exception) as excinfo:
         failing_service.restore_capture(capture_id)
@@ -181,9 +195,12 @@ def test_restore_terminal_persist_failure_raises_with_real_result(
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
     content = b"terminal failure"
     source = make_source_file("report.txt", content=content)
-    capture_id = _capture(sandbox_root, app_paths, store, source, content)
+    file_id = plain_service.analyze_managed_root(managed_root_id).items[0].file_id
+    capture_id = _capture(sandbox_root, app_paths, store, file_id, source, content)
     source.unlink()
 
     failing_store = FailOnEventType(
@@ -194,9 +211,7 @@ def test_restore_terminal_persist_failure_raises_with_real_result(
             EventType.RECOVERY_FAILED,
         },
     )
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     with pytest.raises(TerminalPersistenceError) as excinfo:
         failing_service.restore_capture(capture_id)

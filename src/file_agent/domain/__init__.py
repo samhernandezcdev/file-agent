@@ -16,6 +16,7 @@ from file_agent.domain.human_review import (
     HumanReviewOutcome,
     ReviewSource,
 )
+from file_agent.domain.managed_root import ManagedRoot
 from file_agent.domain.policy import PolicyDecision, PolicyOutcome
 from file_agent.domain.proposal import DestinationCategory, FileCategory, FileProposal
 from file_agent.domain.recovery import (
@@ -58,6 +59,7 @@ __all__ = [
     "FileProposal",
     "HumanReviewDecision",
     "HumanReviewOutcome",
+    "ManagedRoot",
     "PolicyDecision",
     "PolicyOutcome",
     "RecoveryOperation",

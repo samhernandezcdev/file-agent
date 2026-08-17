@@ -5,7 +5,7 @@ failure semantics."""
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from file_agent.application import (
     FileAgentApplicationService,
@@ -30,12 +30,13 @@ from file_agent.scanner import SandboxRoot
 
 def test_multiple_files_produce_one_plan_with_all_items(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("invoice.pdf", content=b"pdf")
     make_source_file("app.exe", content=b"exe")
     make_source_file("mystery.xyz123", content=b"???")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
 
     plan = service.create_organization_plan(
         [item.policy_decision_id for item in analysis.items]
@@ -51,11 +52,12 @@ def test_multiple_files_produce_one_plan_with_all_items(
 
 def test_auto_item_is_ready(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("invoice.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     assert item.policy_outcome is PolicyOutcome.AUTO
 
     plan = service.create_organization_plan([item.policy_decision_id])
@@ -69,11 +71,12 @@ def test_auto_item_is_ready(
 
 def test_review_without_decision_is_review_required(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     assert item.policy_outcome is PolicyOutcome.REVIEW
 
     plan = service.create_organization_plan([item.policy_decision_id])
@@ -88,11 +91,12 @@ def test_review_without_decision_is_review_required(
 
 def test_block_item_is_blocked(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     blocked = PolicyDecision(
         proposal_id=item.proposal_id,
         file_id=item.file_id,
@@ -117,10 +121,11 @@ def test_block_item_is_blocked(
 
 def test_unknown_extension_is_no_action(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("mystery.xyz123", content=b"???")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     assert item.proposed_destination_category is None
 
     plan = service.create_organization_plan([item.policy_decision_id])
@@ -133,11 +138,12 @@ def test_unknown_extension_is_no_action(
 
 def test_review_with_genuine_approve_is_ready_and_preserves_review_policy_outcome(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     review = service.approve_review(item.policy_decision_id)
     assert review.status.value == "succeeded"
 
@@ -153,10 +159,11 @@ def test_review_with_genuine_approve_is_ready_and_preserves_review_policy_outcom
 
 def test_review_with_skip_is_skipped(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     service.skip_review(item.policy_decision_id)
 
     plan = service.create_organization_plan([item.policy_decision_id])
@@ -169,6 +176,7 @@ def test_review_with_skip_is_skipped(
 
 def test_ambiguous_review_history_is_invalid_not_conflict(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
@@ -176,7 +184,7 @@ def test_ambiguous_review_history_is_invalid_not_conflict(
     CONFLICT -- CONFLICT is reserved for filesystem/destination readiness
     problems only."""
     make_source_file("app.exe", content=b"exe")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     # Two genuine, conflicting HUMAN_REVIEW_RECORDED events for the same
     # policy_decision_id -- simulates corrupted/duplicated history.
@@ -213,11 +221,12 @@ def test_ambiguous_review_history_is_invalid_not_conflict(
 
 def test_destination_path_matches_what_apply_item_would_use(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("invoice.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     plan = service.create_organization_plan([item.policy_decision_id])
 
@@ -229,11 +238,12 @@ def test_destination_path_matches_what_apply_item_would_use(
 
 def test_destination_occupied_is_conflict(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("invoice.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     (sandbox_root.path / "Documents" / "invoice.pdf").write_bytes(b"already there")
 
     plan = service.create_organization_plan([item.policy_decision_id])
@@ -245,11 +255,12 @@ def test_destination_occupied_is_conflict(
 
 def test_destination_parent_missing_is_conflict(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("invoice.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     (sandbox_root.path / "Documents").rmdir()
 
     plan = service.create_organization_plan([item.policy_decision_id])
@@ -261,12 +272,13 @@ def test_destination_parent_missing_is_conflict(
 
 def test_source_already_at_destination_is_no_action(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     already_placed = sandbox_root.path / "Documents" / "invoice.pdf"
     already_placed.write_bytes(b"pdf")
-    item_id = service.analyze_scan().items[0].policy_decision_id
+    item_id = service.analyze_managed_root(managed_root_id).items[0].policy_decision_id
 
     plan = service.create_organization_plan([item_id])
 
@@ -277,11 +289,12 @@ def test_source_already_at_destination_is_no_action(
 
 def test_zero_filesystem_mutation_from_preview(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     source = make_source_file("invoice.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
 
     service.create_organization_plan([item.policy_decision_id])
 
@@ -305,12 +318,13 @@ def test_not_found_policy_decision_id_becomes_plan_issue(
 
 def test_summary_counts_match_items_and_issues(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("invoice.pdf", content=b"pdf")
     make_source_file("app.exe", content=b"exe")
     make_source_file("mystery.xyz123", content=b"???")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
     ids.append(uuid4())  # one NOT_FOUND -> issue
 

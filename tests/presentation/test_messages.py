@@ -144,6 +144,7 @@ def _batch_result(
             skipped=0,
             invalid=0,
         ),
+        managed_root_id=uuid4(),
     )
 
 
@@ -184,6 +185,7 @@ def test_history_summary_message_matches_batch_summary_shape() -> None:
         completed_at=None,
         status=BatchStatus.COMPLETED,
         requested_policy_decision_ids=(uuid4(), uuid4()),
+        managed_root_id=uuid4(),
         selected_count=2,
         applied_count=2,
         not_applied_count=0,

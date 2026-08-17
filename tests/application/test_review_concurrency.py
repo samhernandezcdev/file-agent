@@ -17,8 +17,8 @@ from file_agent.scanner import SandboxRoot
 def test_two_services_on_the_same_store_share_the_same_lock(
     sandbox_root: SandboxRoot, app_paths: AppPaths, store: FileAgentStore
 ) -> None:
-    service_a = FileAgentApplicationService(sandbox_root, app_paths, store)
-    service_b = FileAgentApplicationService(sandbox_root, app_paths, store)
+    service_a = FileAgentApplicationService(app_paths, store)
+    service_b = FileAgentApplicationService(app_paths, store)
 
     assert service_a._review_lock is service_b._review_lock
     assert service_a._review_lock is _review_lock_for(store)
@@ -40,8 +40,8 @@ def test_two_services_on_different_stores_get_different_locks(
     Base.metadata.create_all(other_engine)
     other_store = FileAgentStore(other_session_factory)
     try:
-        service_a = FileAgentApplicationService(sandbox_root, app_paths, store)
-        service_b = FileAgentApplicationService(sandbox_root, app_paths, other_store)
+        service_a = FileAgentApplicationService(app_paths, store)
+        service_b = FileAgentApplicationService(app_paths, other_store)
         assert service_a._review_lock is not service_b._review_lock
     finally:
         other_engine.dispose()
@@ -54,11 +54,12 @@ def test_concurrent_approve_and_skip_across_two_services_never_both_succeed(
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    seed_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    item = seed_service.analyze_scan().items[0]
+    seed_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = seed_service.add_managed_root(sandbox_root.path).id
+    item = seed_service.analyze_managed_root(managed_root_id).items[0]
 
-    service_a = FileAgentApplicationService(sandbox_root, app_paths, store)
-    service_b = FileAgentApplicationService(sandbox_root, app_paths, store)
+    service_a = FileAgentApplicationService(app_paths, store)
+    service_b = FileAgentApplicationService(app_paths, store)
 
     results: list[object] = [None, None]
 

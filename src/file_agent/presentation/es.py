@@ -17,7 +17,22 @@ from file_agent.application.dto import (
     BatchApplyResult,
     BatchStatus,
 )
+from file_agent.application.errors import (
+    AppDataManagedRootError,
+    DuplicateManagedRootError,
+    FilesystemRootManagedRootError,
+    InvalidManagedRootPathError,
+    ManagedRootRegistrationError,
+    ManagedRootReparsePointError,
+    OverlappingManagedRootError,
+    SystemDirectoryManagedRootError,
+    UserProfileManagedRootError,
+)
 from file_agent.application.history import BatchHistoryEntry, UnavailableBatchHistoryRow
+from file_agent.application.managed_roots import (
+    ManagedRootLookupStatus,
+    ManagedRootUnavailable,
+)
 from file_agent.application.organization_plan import OrganizationPlanItem, PlanStatus
 from file_agent.presentation.messages import Severity, SuggestedAction, UserMessage
 
@@ -110,6 +125,10 @@ _REASON_DETAIL: dict[str, str] = {
     "discovered_file_not_found": (
         "No pudimos encontrar información suficiente sobre este archivo. "
         "Vuelve a analizarlo."
+    ),
+    "managed_root_not_active": (
+        "FileAgent ya no administra esta carpeta. Agrégala de nuevo y "
+        "vuelve a analizarla si quieres organizarla."
     ),
 }
 
@@ -274,6 +293,122 @@ def unavailable_history_row_message(row: UnavailableBatchHistoryRow) -> UserMess
     return UserMessage(
         title="No pudimos mostrar los detalles de esta operación.",
         detail=_FALLBACK_DETAIL,
+        severity=Severity.ERROR,
+        suggested_action=SuggestedAction.NONE,
+    )
+
+
+# --- FA-015: Managed Roots -----------------------------------------------------
+#
+# "Managed Root" is never exposed as primary UI vocabulary -- "Carpetas que
+# FileAgent puede organizar" is the only user-facing framing. None of these
+# messages ever influence authorization; they render an already-final
+# decision (a raised ManagedRootRegistrationError, or an already-computed
+# ManagedRootUnavailable/rejection outcome), strictly after the fact.
+
+_MANAGED_ROOT_UNAVAILABLE_NOW_DETAIL = "No encontramos esta carpeta en este momento."
+
+_REGISTRATION_OVERLAP_CHILD_DETAIL = (
+    "Esta carpeta está dentro de otra carpeta que FileAgent ya organiza."
+)
+_REGISTRATION_OVERLAP_PARENT_DETAIL = (
+    "Esta carpeta contiene otra carpeta que FileAgent ya organiza."
+)
+_REGISTRATION_BROAD_ROOT_DETAIL = (
+    "Esta carpeta es demasiado grande para organizar directamente. Elige "
+    "una carpeta más específica, como Descargas o Documentos."
+)
+
+_UNDO_HISTORICAL_ROOT_UNAVAILABLE_DETAIL = (
+    "No pudimos deshacer este cambio porque ya no encontramos la carpeta original."
+)
+_RESTORE_HISTORICAL_ROOT_UNAVAILABLE_DETAIL = (
+    "No pudimos restaurar este archivo porque ya no encontramos la carpeta original."
+)
+
+
+def managed_root_registration_error_message(
+    exc: ManagedRootRegistrationError,
+) -> UserMessage:
+    """Total over every ManagedRootRegistrationError subtype: an unmapped
+    future subtype (or the bare base class) renders the safe generic
+    fallback, exactly like rejection_reason_detail does for unmapped
+    reason_codes -- never raises, never shows an empty/English string."""
+    if isinstance(exc, DuplicateManagedRootError):
+        detail = "Esta carpeta ya está agregada."
+    elif isinstance(exc, OverlappingManagedRootError):
+        # Directional: is the PROPOSED path nested inside the existing
+        # root, or does it contain the existing root? Determined at render
+        # time from the two paths the exception already carries -- never
+        # re-derived from anything else.
+        if exc.path.is_relative_to(exc.existing_path):
+            detail = _REGISTRATION_OVERLAP_CHILD_DETAIL
+        else:
+            detail = _REGISTRATION_OVERLAP_PARENT_DETAIL
+    elif isinstance(exc, FilesystemRootManagedRootError):
+        detail = "No puedes agregar una unidad completa. Elige una carpeta específica."
+    elif isinstance(
+        exc, (UserProfileManagedRootError, SystemDirectoryManagedRootError)
+    ):
+        detail = _REGISTRATION_BROAD_ROOT_DETAIL
+    elif isinstance(exc, AppDataManagedRootError):
+        detail = (
+            "Esta carpeta es utilizada internamente por FileAgent y no se "
+            "puede organizar."
+        )
+    elif isinstance(exc, (InvalidManagedRootPathError, ManagedRootReparsePointError)):
+        detail = "No pudimos comprobar esta carpeta de forma segura."
+    else:
+        detail = _FALLBACK_DETAIL
+    return UserMessage(
+        title="No se pudo agregar esta carpeta.",
+        detail=detail,
+        severity=Severity.ERROR,
+        suggested_action=SuggestedAction.NONE,
+    )
+
+
+def managed_root_unavailable_message(
+    unavailable: ManagedRootUnavailable,
+) -> UserMessage:
+    """Renders analyze_managed_root/create_organization_plan/apply_items'
+    ManagedRootUnavailable outcome -- NOT_FOUND (never registered, or
+    removed) and UNAVAILABLE (registered but currently unresolvable) get
+    deliberately distinct copy, matching the distinct user actions each
+    implies (re-register vs. wait/check the folder)."""
+    if unavailable.status is ManagedRootLookupStatus.NOT_FOUND:
+        detail = _REASON_DETAIL["managed_root_not_active"]
+    else:
+        detail = _MANAGED_ROOT_UNAVAILABLE_NOW_DETAIL
+    return UserMessage(
+        title="No pudimos organizar esta carpeta.",
+        detail=detail,
+        severity=Severity.ERROR,
+        suggested_action=SuggestedAction.NONE,
+    )
+
+
+def undo_historical_root_unavailable_message() -> UserMessage:
+    """HISTORICAL_ROOT_UNAVAILABLE, undo_transaction specifically -- must
+    not share copy with restore_capture's below: they are different user
+    actions on different objects (a file move vs. a Vault-recovered file),
+    and "deshacer" (undo) copy would be actively wrong shown for a failed
+    restore, which was never an undo in the first place."""
+    return UserMessage(
+        title="No pudimos deshacer este cambio.",
+        detail=_UNDO_HISTORICAL_ROOT_UNAVAILABLE_DETAIL,
+        severity=Severity.ERROR,
+        suggested_action=SuggestedAction.NONE,
+    )
+
+
+def restore_historical_root_unavailable_message() -> UserMessage:
+    """HISTORICAL_ROOT_UNAVAILABLE, restore_capture specifically -- see
+    undo_historical_root_unavailable_message's docstring for why this is a
+    deliberately separate function/message, not a shared one."""
+    return UserMessage(
+        title="No pudimos restaurar este archivo.",
+        detail=_RESTORE_HISTORICAL_ROOT_UNAVAILABLE_DETAIL,
         severity=Severity.ERROR,
         suggested_action=SuggestedAction.NONE,
     )

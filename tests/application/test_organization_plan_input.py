@@ -5,7 +5,7 @@ or filesystem observation; caller-supplied order is preserved exactly."""
 
 from collections.abc import Callable
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -17,12 +17,13 @@ from file_agent.scanner import SandboxRoot
 
 def test_preserves_caller_order(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
     make_source_file("c.pdf", content=b"c")
-    items = service.analyze_scan().items
+    items = service.analyze_managed_root(managed_root_id).items
     by_name = {item.path.name: item.policy_decision_id for item in items}
     ordered_ids = [by_name["c.pdf"], by_name["a.pdf"], by_name["b.pdf"]]
 
@@ -34,10 +35,11 @@ def test_preserves_caller_order(
 
 def test_duplicate_ids_rejected_before_construction(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
-    item_id = service.analyze_scan().items[0].policy_decision_id
+    item_id = service.analyze_managed_root(managed_root_id).items[0].policy_decision_id
 
     with pytest.raises(DuplicatePolicyDecisionIdError) as excinfo:
         service.create_organization_plan([item_id, uuid4(), item_id])
@@ -57,9 +59,12 @@ def test_duplicate_validation_happens_before_any_store_interaction(
     all. Since build_organization_plan only ever reads (never calls
     record_event), we instead prove zero interaction by wrapping every
     read the planner could call."""
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
     make_source_file("a.pdf", content=b"a")
-    item_id = plain_service.analyze_scan().items[0].policy_decision_id
+    item_id = (
+        plain_service.analyze_managed_root(managed_root_id).items[0].policy_decision_id
+    )
 
     class ExplodingStore:
         def __getattr__(self, name: str) -> object:
@@ -69,7 +74,6 @@ def test_duplicate_validation_happens_before_any_store_interaction(
             )
 
     exploding_service = FileAgentApplicationService(
-        sandbox_root,
         app_paths,
         ExplodingStore(),  # type: ignore[arg-type]
     )
@@ -80,12 +84,16 @@ def test_duplicate_validation_happens_before_any_store_interaction(
 
 def test_one_id_never_produces_multiple_plan_entries(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("app.exe", content=b"exe")
     make_source_file("mystery.xyz123", content=b"???")
-    ids = [item.policy_decision_id for item in service.analyze_scan().items]
+    ids = [
+        item.policy_decision_id
+        for item in service.analyze_managed_root(managed_root_id).items
+    ]
 
     plan = service.create_organization_plan(ids)
 
@@ -97,11 +105,15 @@ def test_one_id_never_produces_multiple_plan_entries(
 
 def test_mixed_valid_and_not_found_preserves_relative_order_per_collection(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("app.exe", content=b"exe")
-    d1, d3 = (item.policy_decision_id for item in service.analyze_scan().items)
+    d1, d3 = (
+        item.policy_decision_id
+        for item in service.analyze_managed_root(managed_root_id).items
+    )
     d2 = uuid4()  # NOT_FOUND -> issue
 
     plan = service.create_organization_plan([d1, d2, d3])

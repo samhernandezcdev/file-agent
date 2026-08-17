@@ -24,18 +24,52 @@ The one lookup that IS keyed by file_id -- store.get_discovered_file(),
 used for source_path/filename -- is safe despite being nominally "shared"
 across generations: those two fields are read off FileObservationRow.path,
 which is structurally immutable after a file's first scan (see the comment
-at its call site in _build_item for the proof). Only FileObservationRow's
+at its call site in _resolve_lineage for the proof). Only FileObservationRow's
 sha256 column is ever updated post-insert.
+
+FA-015: one plan = one Managed Root. build_organization_plan is
+self-contained -- it resolves its own root from the input ids' own lineage,
+rather than trusting a caller-supplied SandboxRoot that might not even
+match them (closing a latent bug class the pre-FA-015 signature allowed).
+Runs in four phases, deliberately ordered to avoid any redundant I/O and to
+detect a Mixed-root selection BEFORE any filesystem inspection:
+
+  Phase 1 -- resolve each id's lineage (policy_decision -> proposal ->
+             discovered_file), producing either a PlanIssue or a resolved
+             context carrying managed_root_id.
+  Phase 2 -- collect the distinct managed_root_id values across every
+             resolved (non-issue) context; raise MixedManagedRootsError if
+             more than one.
+  Phase 3 -- verify the single agreed root is currently active and
+             live-safe (managed_roots._resolve_safe_managed_root); return
+             ManagedRootUnavailable if not.
+  Phase 4 -- finish building each resolved context's OrganizationPlanItem
+             (destination resolution, inspect_destination, status/reason)
+             against the now-validated, live SandboxRoot.
+
+Phases 1 and 4 together are exactly the work this module always did per
+item; the restructuring only splits it at its natural existing seam
+(resolve-lineage vs. compute-destination) and runs each half as one
+batch-wide pass instead of interleaved per item -- no extra cost.
 """
 
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from file_agent.application import queries
+from file_agent.application import managed_roots, queries
 from file_agent.application.dto import ApplicationRejectionReason
-from file_agent.application.errors import reject_duplicate_policy_decision_ids
+from file_agent.application.errors import (
+    MixedManagedRootsError,
+    reject_duplicate_policy_decision_ids,
+)
+from file_agent.application.managed_roots import (
+    ManagedRootLookupStatus,
+    ManagedRootPathFailure,
+    ManagedRootUnavailable,
+)
 from file_agent.application.organization_plan import (
     OrganizationPlan,
     OrganizationPlanItem,
@@ -49,8 +83,14 @@ from file_agent.destination import (
     inspect_destination,
     resolve_destination,
 )
-from file_agent.domain import HumanReviewOutcome, PolicyOutcome
-from file_agent.persistence import FileAgentStore
+from file_agent.domain import (
+    DiscoveredFile,
+    FileProposal,
+    HumanReviewOutcome,
+    PolicyDecision,
+    PolicyOutcome,
+)
+from file_agent.persistence import AppPaths, FileAgentStore
 from file_agent.scanner import SandboxRoot
 
 
@@ -68,35 +108,101 @@ _DESTINATION_CONFLICT_REASON: dict[DestinationConflict, PlanReasonCode] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class _ResolvedContext:
+    """Phase 1's output for one successfully-lineage-resolved id -- carries
+    everything phase 4 needs to finish the item, plus the managed_root_id
+    phase 2's Mixed-root check needs. Never exposed outside this module."""
+
+    policy_decision_id: UUID
+    policy_decision: PolicyDecision
+    proposal: FileProposal
+    discovered: DiscoveredFile
+
+
 def build_organization_plan(
     store: FileAgentStore,
-    sandbox_root: SandboxRoot,
+    app_paths: AppPaths,
     policy_decision_ids: Sequence[UUID],
     *,
     clock: Callable[[], datetime] = _utc_now,
-) -> OrganizationPlan:
+) -> OrganizationPlan | ManagedRootUnavailable:
     """Sequence[UUID], not Iterable[UUID]: caller order is meaningful and
     preserved exactly. Frozen to a tuple immediately, then validated for
     duplicates BEFORE any persistence query or filesystem observation --
     duplicate ids are invalid caller input (DuplicatePolicyDecisionIdError),
     never silently deduplicated, never sorted, never represented as a
-    PlanIssue."""
+    PlanIssue. MixedManagedRootsError is raised (not returned) for the same
+    reason -- a structural, cross-item consistency problem over the
+    selected id SET -- but, unlike duplicate detection, requires resolving
+    each id's lineage first (real persistence reads); see phase 2 below."""
     frozen = tuple(policy_decision_ids)
     reject_duplicate_policy_decision_ids(frozen)
 
-    items: list[OrganizationPlanItem] = []
+    # Phase 1.
+    resolved_by_id: dict[UUID, _ResolvedContext] = {}
     issues: list[PlanIssue] = []
     for policy_decision_id in frozen:
-        outcome = _build_item(store, sandbox_root, policy_decision_id)
+        outcome = _resolve_lineage(store, policy_decision_id)
         if isinstance(outcome, PlanIssue):
             issues.append(outcome)
         else:
-            items.append(outcome)
+            resolved_by_id[policy_decision_id] = outcome
+
+    # Phase 2 -- before any filesystem inspection.
+    roots_seen = {
+        context.discovered.managed_root_id
+        for context in resolved_by_id.values()
+        if context.discovered.managed_root_id is not None
+    }
+    if len(roots_seen) > 1:
+        raise MixedManagedRootsError(frozen, roots_seen)
+    managed_root_id = next(iter(roots_seen), None)
+
+    if managed_root_id is None:
+        # Every id either failed lineage resolution or had no managed-root
+        # lineage at all -- mirrors OrganizationPlan's existing "zero
+        # items, all issues" support; no root to resolve or display.
+        return OrganizationPlan(
+            id=uuid4(),
+            created_at=clock(),
+            root_path=None,
+            managed_root_id=None,
+            source_policy_decision_ids=frozen,
+            items=(),
+            issues=tuple(issues),
+            summary=_summarize([], issues),
+        )
+
+    # Phase 3.
+    managed_root = store.get_managed_root(managed_root_id)
+    if managed_root is None or not managed_root.is_active:
+        return ManagedRootUnavailable(
+            managed_root_id,
+            ManagedRootLookupStatus.NOT_FOUND,
+            f"no active managed root with id={managed_root_id}",
+        )
+    root_outcome = managed_roots._resolve_safe_managed_root(
+        managed_root.path, app_paths
+    )
+    if isinstance(root_outcome, ManagedRootPathFailure):
+        return ManagedRootUnavailable(
+            managed_root_id, ManagedRootLookupStatus.UNAVAILABLE, root_outcome.detail
+        )
+    sandbox_root = root_outcome
+
+    # Phase 4.
+    items = [
+        _finish_item(store, sandbox_root, resolved_by_id[policy_decision_id])
+        for policy_decision_id in frozen
+        if policy_decision_id in resolved_by_id
+    ]
 
     return OrganizationPlan(
         id=uuid4(),
         created_at=clock(),
         root_path=sandbox_root.path,
+        managed_root_id=managed_root_id,
         source_policy_decision_ids=frozen,
         items=tuple(items),
         issues=tuple(issues),
@@ -114,9 +220,15 @@ def _issue_reason(
     return ApplicationRejectionReason.MALFORMED_EVENT_PAYLOAD.value, failure.detail
 
 
-def _build_item(
-    store: FileAgentStore, sandbox_root: SandboxRoot, policy_decision_id: UUID
-) -> OrganizationPlanItem | PlanIssue:
+def _resolve_lineage(
+    store: FileAgentStore, policy_decision_id: UUID
+) -> "_ResolvedContext | PlanIssue":
+    """Phase 1 for one id: policy_decision -> proposal -> discovered_file.
+    A file with no managed_root_id at all (pre-FA-015 legacy data) can
+    never be organized under FA-015's authority model -- surfaced as a
+    PlanIssue here (not a _ResolvedContext), so it never participates in
+    phase 2's Mixed-root check or phase 4's item construction, exactly
+    mirroring how _apply_one treats the identical case."""
     policy_decision = queries.find_policy_decision(store, policy_decision_id)
     if isinstance(policy_decision, queries.LookupFailure):
         code, detail = _issue_reason(
@@ -134,17 +246,17 @@ def _build_item(
     # discovered is the one read in this function NOT keyed by
     # proposal_id/policy_decision_id -- it is looked up by file_id, off the
     # persisted FileObservationRow, which is nominally "shared" across every
-    # analysis generation of this file. That is safe ONLY because the two
-    # fields actually read from it below (.path, and the derived .filename)
-    # are structurally immutable for the lifetime of that row: the entire
+    # analysis generation of this file. That is safe ONLY because the
+    # fields actually read from it (.path/.filename/.managed_root_id) are
+    # structurally immutable for the lifetime of that row: the entire
     # codebase contains exactly one UPDATE against FileObservationRow
     # (persistence.repositories.update_observation_hash), and it writes
-    # ONLY the sha256 column -- never path, size_bytes, created_at, or
-    # modified_at (see persistence.store.record_hash_success's own
+    # ONLY the sha256 column -- never path, size_bytes, timestamps, or
+    # managed_root_id (see persistence.store.record_hash_success's own
     # docstring). Every OTHER generation-sensitive fact this function
     # exposes (category, destination_category, policy_outcome,
     # human_review_outcome, proposal_id) comes from `proposal`/
-    # `policy_decision`/`review` above, each looked up by this exact
+    # `policy_decision` above, each looked up by this exact
     # policy_decision_id's own lineage -- never from `discovered`.
     discovered = store.get_discovered_file(policy_decision.file_id)
     if discovered is None:
@@ -153,6 +265,27 @@ def _build_item(
             ApplicationRejectionReason.DISCOVERED_FILE_NOT_FOUND.value,
             f"no DiscoveredFile with id={policy_decision.file_id}",
         )
+    if discovered.managed_root_id is None:
+        return PlanIssue(
+            policy_decision_id,
+            ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
+            "file has no managed root lineage (pre-FA-015 legacy data)",
+        )
+
+    return _ResolvedContext(policy_decision_id, policy_decision, proposal, discovered)
+
+
+def _finish_item(
+    store: FileAgentStore, sandbox_root: SandboxRoot, context: "_ResolvedContext"
+) -> OrganizationPlanItem:
+    """Phase 4 for one resolved context: everything build_organization_plan
+    used to do after confirming `discovered is not None`, unchanged in
+    substance -- now guaranteed to run against a validated, live, correct
+    SandboxRoot (phase 3 already proved it)."""
+    policy_decision = context.policy_decision
+    proposal = context.proposal
+    discovered = context.discovered
+    policy_decision_id = context.policy_decision_id
 
     def make_item(
         *,

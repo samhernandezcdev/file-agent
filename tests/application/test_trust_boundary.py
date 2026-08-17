@@ -26,13 +26,17 @@ FORBIDDEN_ANNOTATION_SUBSTRINGS = (
 )
 
 PUBLIC_METHOD_NAMES = (
-    "analyze_scan",
+    "analyze_managed_root",
     "analyze_file",
     "approve_review",
     "skip_review",
     "apply_item",
+    "apply_items",
     "undo_transaction",
     "restore_capture",
+    "add_managed_root",
+    "remove_managed_root",
+    "list_managed_roots",
 )
 
 
@@ -66,6 +70,7 @@ def test_mutating_methods_take_only_uuid_and_optional_note() -> None:
         "apply_item",
         "undo_transaction",
         "restore_capture",
+        "remove_managed_root",
     )
     for name in mutating:
         method = getattr(FileAgentApplicationService, name)

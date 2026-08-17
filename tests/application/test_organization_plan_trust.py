@@ -7,6 +7,7 @@ import inspect
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID
 
 from file_agent.application import FileAgentApplicationService
 from file_agent.scanner import SandboxRoot
@@ -118,6 +119,7 @@ def test_planner_never_calls_engines_or_records_review() -> None:
 
 def test_shared_inspection_agreement_between_planner_and_transaction_engine(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
@@ -128,7 +130,7 @@ def test_shared_inspection_agreement_between_planner_and_transaction_engine(
     from file_agent.destination import inspection as inspection_module
 
     make_source_file("invoice.pdf", content=b"pdf")
-    item = service.analyze_scan().items[0]
+    item = service.analyze_managed_root(managed_root_id).items[0]
     # Pre-occupy the destination -- both layers should independently detect
     # ALREADY_OCCUPIED via inspect_destination.
     (sandbox_root.path / "Documents" / "invoice.pdf").write_bytes(b"already there")

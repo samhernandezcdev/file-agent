@@ -7,7 +7,7 @@ other."""
 
 from collections.abc import Callable
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from file_agent.application import (
     BatchApplyItemStatus,
@@ -55,11 +55,12 @@ class FailOnNthCallOfType:
 
 def test_completed_batch_reconstructs_exact_ordered_results(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     applied = service.apply_items(ids)
@@ -77,10 +78,11 @@ def test_completed_batch_reconstructs_exact_ordered_results(
 
 def test_get_batch_history_without_include_items_omits_items(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
     applied = service.apply_items(ids)
 
@@ -103,16 +105,15 @@ def test_incomplete_batch_never_fabricates_unprocessed_remainder(
     never fabricated as NOT_APPLIED."""
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     # D1's own checkpoint genuinely persists; D2's checkpoint persist is
     # where the simulated crash happens -- D2 is never processed at all.
     failing_store = FailOnNthCallOfType(store, EventType.BATCH_ITEM_RECORDED, fail_at=2)
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
     result = failing_service.apply_items(ids)
     assert result.status is BatchStatus.INCOMPLETE
 
@@ -138,15 +139,14 @@ def test_review_pending_and_block_outcomes_survive_a_crash(
     record of their outcome. A crash before D4 must not lose them."""
     make_source_file("applied.pdf", content=b"a")
     make_source_file("pending.exe", content=b"b")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     applied_item, pending_item = analysis.items
     ids = [applied_item.policy_decision_id, pending_item.policy_decision_id]
 
     failing_store = FailOnEventType(store, {EventType.BATCH_APPLY_COMPLETED})
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
     result = failing_service.apply_items(ids)
     assert result.status is BatchStatus.INCOMPLETE
     assert result.items[1].status is BatchApplyItemStatus.NOT_APPLIED
@@ -169,8 +169,9 @@ def test_terminal_persist_failure_item_is_unprocessed_in_durable_history(
     outcome), but durable history has no checkpoint for it at all -- never
     APPLIED, never NOT_APPLIED."""
     make_source_file("a.pdf", content=b"a")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
 
     failing_store = FailOnEventType(
@@ -181,9 +182,7 @@ def test_terminal_persist_failure_item_is_unprocessed_in_durable_history(
             EventType.TRANSACTION_FAILED,
         },
     )
-    failing_service = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    failing_service = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
     result = failing_service.apply_items(ids)
     assert result.items[0].status is BatchApplyItemStatus.APPLIED
 
@@ -218,6 +217,7 @@ def test_duplicate_started_events_fail_closed_ambiguous(
 
 def test_structural_incompleteness_under_completed_fails_closed_malformed(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
     store: FileAgentStore,
 ) -> None:
@@ -227,7 +227,7 @@ def test_structural_incompleteness_under_completed_fails_closed_malformed(
     history must fail closed rather than silently tolerate the gap."""
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
     applied = service.apply_items(ids)
     assert applied.status is BatchStatus.COMPLETED
@@ -425,6 +425,7 @@ def test_duplicate_checkpoint_input_index_fails_closed_ambiguous(
 
 def test_transaction_ownership_mismatch_fails_closed_malformed(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
     store: FileAgentStore,
 ) -> None:
@@ -432,7 +433,7 @@ def test_transaction_ownership_mismatch_fails_closed_malformed(
     belongs to a DIFFERENT batch must never be trusted just because it
     resolves -- round-5 correction 1."""
     make_source_file("a.pdf", content=b"a")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     real_item = analysis.items[0]
     real_result = service.apply_items([real_item.policy_decision_id])
     real_transaction_id = real_result.items[0].transaction_id
@@ -476,11 +477,12 @@ def test_transaction_ownership_mismatch_fails_closed_malformed(
 
 def test_list_and_detail_report_identical_counts_for_a_valid_batch(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("a.pdf", content=b"a")
     make_source_file("b.pdf", content=b"b")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     ids = [item.policy_decision_id for item in analysis.items]
     applied = service.apply_items(ids)
 

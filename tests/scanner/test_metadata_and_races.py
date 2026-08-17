@@ -3,6 +3,7 @@
 import os
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -29,7 +30,7 @@ def test_file_vanishing_between_listing_and_stat_is_recoverable(
     monkeypatch.setattr(ScannerClass, "_stat_entry", flaky_stat_entry)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert {f.filename for f in result.files} == {"stays.txt"}
     not_found = [i for i in result.issues if i.issue_type == ScanIssueType.NOT_FOUND]
@@ -52,7 +53,7 @@ def test_permission_denied_on_file_is_recoverable(
     monkeypatch.setattr(ScannerClass, "_stat_entry", flaky_stat_entry)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert {f.filename for f in result.files} == {"open.txt"}
     denied = [
@@ -79,7 +80,7 @@ def test_permission_denied_listing_subdirectory_skips_subtree(
     monkeypatch.setattr(scanner_module.os, "scandir", flaky_scandir)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     assert {f.filename for f in result.files} == {"visible.txt"}
     denied = [
@@ -95,7 +96,7 @@ def test_windows_timestamp_mapping(sandbox_dir: Path) -> None:
     real_stat = os.stat(target)
 
     root = SandboxRoot.from_path(sandbox_dir)
-    result = DirectoryScanner(root).run()
+    result = DirectoryScanner(root, uuid4()).run()
 
     discovered = next(f for f in result.files if f.filename == "timed.txt")
     assert discovered.created_at == datetime.fromtimestamp(real_stat.st_ctime, tz=UTC)

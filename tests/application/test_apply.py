@@ -5,6 +5,7 @@ TransactionRequest."""
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -24,11 +25,12 @@ from .conftest import FailOnEventType
 
 def test_auto_applies_and_moves_the_file(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     source = make_source_file("report.pdf", content=b"pdf content")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
     assert item.policy_outcome is PolicyOutcome.AUTO
 
@@ -44,10 +46,11 @@ def test_auto_applies_and_moves_the_file(
 
 def test_review_without_decision_rejects(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
     assert item.policy_outcome is PolicyOutcome.REVIEW
 
@@ -60,11 +63,12 @@ def test_review_without_decision_rejects(
 
 def test_review_with_genuine_approve_applies(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
     source = make_source_file("app.exe", content=b"exe content")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
 
     review = service.approve_review(item.policy_decision_id)
@@ -79,10 +83,11 @@ def test_review_with_genuine_approve_applies(
 
 def test_review_with_skip_rejects(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("app.exe", content=b"exe content")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
 
     review = service.skip_review(item.policy_decision_id)
@@ -96,11 +101,12 @@ def test_review_with_skip_rejects(
 
 def test_block_rejects(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
 
     # PolicyEngine never produces BLOCK in v1 -- hand-craft a BLOCK decision
@@ -128,6 +134,7 @@ def test_block_rejects(
 
 def test_forged_human_review_decision_cannot_authorize(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     make_source_file: Callable[..., Path],
 ) -> None:
     """apply_item's only decision input is queries.find_effective_human_review's
@@ -138,7 +145,7 @@ def test_forged_human_review_decision_cannot_authorize(
     review, REVIEW never applies, no matter what a caller might construct
     in memory."""
     make_source_file("app.exe", content=b"exe content")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
 
     # No approve_review()/skip_review() call was ever made -- only a
@@ -153,11 +160,12 @@ def test_forged_human_review_decision_cannot_authorize(
 
 def test_transaction_requested_persisted_before_commit_terminal_after(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     store: FileAgentStore,
     make_source_file: Callable[..., Path],
 ) -> None:
     make_source_file("report.pdf", content=b"pdf content")
-    analysis = service.analyze_scan()
+    analysis = service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
 
     result = service.apply_item(item.policy_decision_id)
@@ -174,6 +182,7 @@ def test_transaction_requested_persisted_before_commit_terminal_after(
 
 def test_applying_older_generation_uses_its_own_snapshot_not_latest_hash(
     service: FileAgentApplicationService,
+    managed_root_id: UUID,
     sandbox_root: SandboxRoot,
     make_source_file: Callable[..., Path],
 ) -> None:
@@ -182,7 +191,7 @@ def test_applying_older_generation_uses_its_own_snapshot_not_latest_hash(
     whatever the shared DiscoveredFile row currently holds after a LATER
     re-analysis with different content."""
     source = make_source_file("report.pdf", content=b"generation one content")
-    first = service.analyze_scan()
+    first = service.analyze_managed_root(managed_root_id)
     old_item = first.items[0]
 
     # Re-analyze the SAME file_id with DIFFERENT content -- a new generation,
@@ -212,14 +221,13 @@ def test_requested_persist_failure_prevents_commit(
     make_source_file: Callable[..., Path],
 ) -> None:
     source = make_source_file("report.pdf", content=b"pdf content")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
 
     failing_store = FailOnEventType(store, {EventType.TRANSACTION_REQUESTED})
-    service_with_failing_store = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    service_with_failing_store = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     with pytest.raises(Exception) as excinfo:
         service_with_failing_store.apply_item(item.policy_decision_id)
@@ -236,8 +244,9 @@ def test_terminal_persist_failure_after_success_raises_with_real_result(
     make_source_file: Callable[..., Path],
 ) -> None:
     source = make_source_file("report.pdf", content=b"pdf content")
-    plain_service = FileAgentApplicationService(sandbox_root, app_paths, store)
-    analysis = plain_service.analyze_scan()
+    plain_service = FileAgentApplicationService(app_paths, store)
+    managed_root_id = plain_service.add_managed_root(sandbox_root.path).id
+    analysis = plain_service.analyze_managed_root(managed_root_id)
     item = analysis.items[0]
 
     failing_store = FailOnEventType(
@@ -248,9 +257,7 @@ def test_terminal_persist_failure_after_success_raises_with_real_result(
             EventType.TRANSACTION_FAILED,
         },
     )
-    service_with_failing_store = FileAgentApplicationService(
-        sandbox_root, app_paths, failing_store
-    )  # type: ignore[arg-type]
+    service_with_failing_store = FileAgentApplicationService(app_paths, failing_store)  # type: ignore[arg-type]
 
     with pytest.raises(TerminalPersistenceError) as excinfo:
         service_with_failing_store.apply_item(item.policy_decision_id)

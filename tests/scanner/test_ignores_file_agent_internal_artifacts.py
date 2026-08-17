@@ -22,7 +22,7 @@ def test_root_level_internal_artifact_is_skipped(sandbox_dir: Path) -> None:
     reserved_name = _reserved_name()
     (sandbox_dir / reserved_name).write_bytes(b"internal staging artifact")
 
-    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir)).run()
+    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir), uuid4()).run()
 
     discovered_names = {f.filename for f in result.files}
     assert discovered_names == {"normal.pdf"}
@@ -36,7 +36,7 @@ def test_recursive_internal_artifact_is_skipped(sandbox_dir: Path) -> None:
     reserved_name = _reserved_name()
     (folder / reserved_name).write_bytes(b"internal staging artifact")
 
-    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir)).run()
+    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir), uuid4()).run()
 
     discovered_names = {f.filename for f in result.files}
     assert discovered_names == {"normal.txt"}
@@ -54,7 +54,7 @@ def test_near_miss_names_remain_normal_scanner_candidates(sandbox_dir: Path) -> 
     for name in near_misses:
         (sandbox_dir / name).write_bytes(b"looks similar but is not reserved")
 
-    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir)).run()
+    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir), uuid4()).run()
 
     discovered_names = {f.filename for f in result.files}
     assert discovered_names == set(near_misses)
@@ -64,7 +64,7 @@ def test_skipped_artifact_produces_no_file_discovered_event(sandbox_dir: Path) -
     reserved_name = _reserved_name()
     (sandbox_dir / reserved_name).write_bytes(b"internal staging artifact")
 
-    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir)).run()
+    result = DirectoryScanner(SandboxRoot.from_path(sandbox_dir), uuid4()).run()
 
     assert result.files == ()
     assert result.events == ()

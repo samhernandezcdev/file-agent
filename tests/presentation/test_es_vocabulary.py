@@ -5,7 +5,23 @@ codebase's rejection vocabularies define, plus for genuinely unknown/future
 codes; no raw enum name or forbidden jargon term ever appears in rendered
 copy."""
 
+from uuid import uuid4
+
 from file_agent.application.dto import ApplicationRejectionReason, BatchApplyItemStatus
+from file_agent.application.errors import (
+    AppDataManagedRootError,
+    DuplicateManagedRootError,
+    FilesystemRootManagedRootError,
+    InvalidManagedRootPathError,
+    ManagedRootReparsePointError,
+    OverlappingManagedRootError,
+    SystemDirectoryManagedRootError,
+    UserProfileManagedRootError,
+)
+from file_agent.application.managed_roots import (
+    ManagedRootLookupStatus,
+    ManagedRootUnavailable,
+)
 from file_agent.application.organization_plan import PlanReasonCode, PlanStatus
 from file_agent.domain import RejectionCode
 from file_agent.presentation import es
@@ -16,7 +32,30 @@ FORBIDDEN_JARGON = (
     "hash mismatch",
     "reparse point",
     "event payload",
+    "canonical path",
+    "containment",
+    "root authority",
+    "managed_root_id",
+    "filesystem boundary",
 )
+
+
+def _registration_error_instances() -> list[Exception]:
+    from pathlib import Path
+
+    path = Path("C:/Users/Ana/Downloads").resolve()
+    other_id = uuid4()
+    return [
+        DuplicateManagedRootError(path, other_id),
+        OverlappingManagedRootError(path / "child", other_id, path),
+        OverlappingManagedRootError(path, other_id, path / "child"),
+        FilesystemRootManagedRootError(path, "drive root"),
+        UserProfileManagedRootError(path, "user profile"),
+        SystemDirectoryManagedRootError(path, "system directory"),
+        AppDataManagedRootError(path, "app data overlap"),
+        InvalidManagedRootPathError(path, "invalid"),
+        ManagedRootReparsePointError(path, "reparse"),
+    ]
 
 
 def _all_rendered_strings() -> list[str]:
@@ -30,6 +69,26 @@ def _all_rendered_strings() -> list[str]:
             strings.append(es.rejection_reason_detail(member.value))
     strings.append(es.rejection_reason_detail(None))
     strings.append(es.rejection_reason_detail("some_future_unmapped_code"))
+
+    for exc in _registration_error_instances():
+        message = es.managed_root_registration_error_message(exc)
+        strings.append(message.title)
+        strings.append(message.detail)
+
+    for status in ManagedRootLookupStatus:
+        message = es.managed_root_unavailable_message(
+            ManagedRootUnavailable(uuid4(), status, "detail")
+        )
+        strings.append(message.title)
+        strings.append(message.detail)
+
+    for message in (
+        es.undo_historical_root_unavailable_message(),
+        es.restore_historical_root_unavailable_message(),
+    ):
+        strings.append(message.title)
+        strings.append(message.detail)
+
     return strings
 
 
