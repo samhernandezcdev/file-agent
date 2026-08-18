@@ -1,0 +1,18 @@
+{
+  "commands": [
+    {"name": "managed_roots.add", "retry_safety": "unknown_on_disconnect"},
+    {"name": "managed_roots.remove", "retry_safety": "unknown_on_disconnect"},
+    {"name": "managed_roots.list", "retry_safety": "safe_retry"},
+    {"name": "analysis.run", "retry_safety": "safe_retry"},
+    {"name": "analysis.reanalyze_file", "retry_safety": "safe_retry"},
+    {"name": "plan.create", "retry_safety": "safe_retry"},
+    {"name": "review.approve", "retry_safety": "unknown_on_disconnect"},
+    {"name": "review.skip", "retry_safety": "unknown_on_disconnect"},
+    {"name": "apply.item", "retry_safety": "unknown_on_disconnect"},
+    {"name": "apply.items", "retry_safety": "unknown_on_disconnect"},
+    {"name": "history.get_batch", "retry_safety": "safe_retry"},
+    {"name": "history.list_recent", "retry_safety": "safe_retry"},
+    {"name": "recovery.undo_transaction", "retry_safety": "unknown_on_disconnect"},
+    {"name": "recovery.restore_capture", "retry_safety": "unknown_on_disconnect"}
+  ]
+}

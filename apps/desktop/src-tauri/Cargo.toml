@@ -1,0 +1,40 @@
+[package]
+name = "desktop"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["you"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
+
+[features]
+# Off by default -- the WebdriverIO test hook plugins/capability must
+# never ship in a real release build. `pnpm --filter desktop e2e` builds
+# with this feature enabled; the normal `pnpm build`/`tauri build` path
+# never does. Two separate plugins are required: `tauri-plugin-wdio`
+# (execute/mock/log-forwarding) and `tauri-plugin-wdio-webdriver` (the
+# embedded WebDriver server `@wdio/tauri-service`'s default
+# `driverProvider: 'embedded'` talks to).
+e2e-testing = ["tauri-plugin-wdio", "tauri-plugin-wdio-webdriver"]
+
+[dev-dependencies]
+tempfile = "3"
+

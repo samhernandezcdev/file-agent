@@ -1,0 +1,1290 @@
+{
+  "$defs": {
+    "AnalysisFailureView": {
+      "properties": {
+        "fileId": {
+          "format": "uuid",
+          "title": "Fileid",
+          "type": "string"
+        },
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
+        },
+        "sourceDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sourcedisplaypath"
+        }
+      },
+      "required": [
+        "fileId",
+        "sourceDisplayPath",
+        "message"
+      ],
+      "title": "AnalysisFailureView",
+      "type": "object"
+    },
+    "AnalysisReanalyzeFileParams": {
+      "properties": {
+        "fileId": {
+          "format": "uuid",
+          "title": "Fileid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fileId"
+      ],
+      "title": "AnalysisReanalyzeFileParams",
+      "type": "object"
+    },
+    "AnalysisResultView": {
+      "properties": {
+        "failures": {
+          "items": {
+            "$ref": "#/$defs/AnalysisFailureView"
+          },
+          "title": "Failures",
+          "type": "array"
+        },
+        "filesDiscovered": {
+          "title": "Filesdiscovered",
+          "type": "integer"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/AnalyzedItemView"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "outcome": {
+          "const": "ok",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "protectedTreesMessage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserMessageView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scanId": {
+          "format": "uuid",
+          "title": "Scanid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "scanId",
+        "items",
+        "failures",
+        "filesDiscovered",
+        "protectedTreesMessage"
+      ],
+      "title": "AnalysisResultView",
+      "type": "object"
+    },
+    "AnalysisRunParams": {
+      "properties": {
+        "managedRootId": {
+          "format": "uuid",
+          "title": "Managedrootid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "managedRootId"
+      ],
+      "title": "AnalysisRunParams",
+      "type": "object"
+    },
+    "AnalyzedItemView": {
+      "properties": {
+        "categoryLabel": {
+          "title": "Categorylabel",
+          "type": "string"
+        },
+        "confidence": {
+          "title": "Confidence",
+          "type": "number"
+        },
+        "fileId": {
+          "format": "uuid",
+          "title": "Fileid",
+          "type": "string"
+        },
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "policyDecisionId": {
+          "format": "uuid",
+          "title": "Policydecisionid",
+          "type": "string"
+        },
+        "proposedDestinationCategoryLabel": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Proposeddestinationcategorylabel"
+        },
+        "requiresReview": {
+          "title": "Requiresreview",
+          "type": "boolean"
+        },
+        "sourceDisplayPath": {
+          "title": "Sourcedisplaypath",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fileId",
+        "filename",
+        "sourceDisplayPath",
+        "categoryLabel",
+        "proposedDestinationCategoryLabel",
+        "policyDecisionId",
+        "requiresReview",
+        "confidence"
+      ],
+      "title": "AnalyzedItemView",
+      "type": "object"
+    },
+    "ApplyItemParams": {
+      "properties": {
+        "policyDecisionId": {
+          "format": "uuid",
+          "title": "Policydecisionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policyDecisionId"
+      ],
+      "title": "ApplyItemParams",
+      "type": "object"
+    },
+    "ApplyItemsParams": {
+      "properties": {
+        "policyDecisionIds": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Policydecisionids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "policyDecisionIds"
+      ],
+      "title": "ApplyItemsParams",
+      "type": "object"
+    },
+    "ApplyResultView": {
+      "properties": {
+        "destinationDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Destinationdisplaypath"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserMessageView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policyDecisionId": {
+          "format": "uuid",
+          "title": "Policydecisionid",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "rejected",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "transactionId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Transactionid"
+        }
+      },
+      "required": [
+        "policyDecisionId",
+        "transactionId",
+        "status",
+        "destinationDisplayPath",
+        "message"
+      ],
+      "title": "ApplyResultView",
+      "type": "object"
+    },
+    "BatchApplyItemResultView": {
+      "properties": {
+        "destinationDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Destinationdisplaypath"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Filename"
+        },
+        "inputIndex": {
+          "title": "Inputindex",
+          "type": "integer"
+        },
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
+        },
+        "policyDecisionId": {
+          "format": "uuid",
+          "title": "Policydecisionid",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "transactionId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Transactionid"
+        }
+      },
+      "required": [
+        "policyDecisionId",
+        "inputIndex",
+        "filename",
+        "status",
+        "transactionId",
+        "destinationDisplayPath",
+        "message"
+      ],
+      "title": "BatchApplyItemResultView",
+      "type": "object"
+    },
+    "BatchApplyResultView": {
+      "properties": {
+        "batchId": {
+          "format": "uuid",
+          "title": "Batchid",
+          "type": "string"
+        },
+        "completedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completedat"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/BatchApplyItemResultView"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "managedRootId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Managedrootid"
+        },
+        "outcome": {
+          "const": "ok",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "startedAt": {
+          "format": "date-time",
+          "title": "Startedat",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "incomplete"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "$ref": "#/$defs/BatchApplySummaryView"
+        },
+        "summaryMessage": {
+          "$ref": "#/$defs/UserMessageView"
+        }
+      },
+      "required": [
+        "outcome",
+        "batchId",
+        "status",
+        "startedAt",
+        "completedAt",
+        "managedRootId",
+        "items",
+        "summary",
+        "summaryMessage"
+      ],
+      "title": "BatchApplyResultView",
+      "type": "object"
+    },
+    "BatchApplySummaryView": {
+      "properties": {
+        "applied": {
+          "title": "Applied",
+          "type": "integer"
+        },
+        "invalid": {
+          "title": "Invalid",
+          "type": "integer"
+        },
+        "notApplied": {
+          "title": "Notapplied",
+          "type": "integer"
+        },
+        "processed": {
+          "title": "Processed",
+          "type": "integer"
+        },
+        "selected": {
+          "title": "Selected",
+          "type": "integer"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "selected",
+        "processed",
+        "applied",
+        "notApplied",
+        "skipped",
+        "invalid"
+      ],
+      "title": "BatchApplySummaryView",
+      "type": "object"
+    },
+    "BatchHistoryEntryView": {
+      "properties": {
+        "appliedCount": {
+          "title": "Appliedcount",
+          "type": "integer"
+        },
+        "batchId": {
+          "format": "uuid",
+          "title": "Batchid",
+          "type": "string"
+        },
+        "completedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Completedat"
+        },
+        "invalidCount": {
+          "title": "Invalidcount",
+          "type": "integer"
+        },
+        "items": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/BatchHistoryItemView"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Items"
+        },
+        "managedRootId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Managedrootid"
+        },
+        "notAppliedCount": {
+          "title": "Notappliedcount",
+          "type": "integer"
+        },
+        "outcome": {
+          "const": "found",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "processedCount": {
+          "title": "Processedcount",
+          "type": "integer"
+        },
+        "rowType": {
+          "const": "entry",
+          "title": "Rowtype",
+          "type": "string"
+        },
+        "selectedCount": {
+          "title": "Selectedcount",
+          "type": "integer"
+        },
+        "skippedCount": {
+          "title": "Skippedcount",
+          "type": "integer"
+        },
+        "startedAt": {
+          "format": "date-time",
+          "title": "Startedat",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "incomplete"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summaryMessage": {
+          "$ref": "#/$defs/UserMessageView"
+        }
+      },
+      "required": [
+        "rowType",
+        "outcome",
+        "batchId",
+        "startedAt",
+        "completedAt",
+        "status",
+        "selectedCount",
+        "appliedCount",
+        "notAppliedCount",
+        "skippedCount",
+        "invalidCount",
+        "processedCount",
+        "managedRootId",
+        "items",
+        "summaryMessage"
+      ],
+      "title": "BatchHistoryEntryView",
+      "type": "object"
+    },
+    "BatchHistoryItemView": {
+      "properties": {
+        "inputIndex": {
+          "title": "Inputindex",
+          "type": "integer"
+        },
+        "policyDecisionId": {
+          "format": "uuid",
+          "title": "Policydecisionid",
+          "type": "string"
+        },
+        "reasonDetail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Reasondetail"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "transactionId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Transactionid"
+        }
+      },
+      "required": [
+        "policyDecisionId",
+        "inputIndex",
+        "status",
+        "transactionId",
+        "reasonDetail"
+      ],
+      "title": "BatchHistoryItemView",
+      "type": "object"
+    },
+    "HistoryGetBatchParams": {
+      "properties": {
+        "batchId": {
+          "format": "uuid",
+          "title": "Batchid",
+          "type": "string"
+        },
+        "includeItems": {
+          "default": false,
+          "title": "Includeitems",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "batchId"
+      ],
+      "title": "HistoryGetBatchParams",
+      "type": "object"
+    },
+    "HistoryListRecentParams": {
+      "properties": {
+        "limit": {
+          "default": 20,
+          "title": "Limit",
+          "type": "integer"
+        }
+      },
+      "title": "HistoryListRecentParams",
+      "type": "object"
+    },
+    "HistoryLookupFailureView": {
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
+        },
+        "outcome": {
+          "const": "unavailable",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "message"
+      ],
+      "title": "HistoryLookupFailureView",
+      "type": "object"
+    },
+    "ManagedRootListView": {
+      "properties": {
+        "roots": {
+          "items": {
+            "$ref": "#/$defs/ManagedRootView"
+          },
+          "title": "Roots",
+          "type": "array"
+        }
+      },
+      "required": [
+        "roots"
+      ],
+      "title": "ManagedRootListView",
+      "type": "object"
+    },
+    "ManagedRootUnavailableResultView": {
+      "description": "The `outcome` discriminant shared by every command whose\nFileAgentApplicationService method can return ManagedRootUnavailable\ninstead of its normal result -- analysis.run, plan.create, apply.items.\nNot an exception/transport error: a legitimate, expected business\noutcome, delivered as a normal `ok: true` terminal frame like any\nother result.",
+      "properties": {
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
+        },
+        "outcome": {
+          "const": "managed_root_unavailable",
+          "title": "Outcome",
+          "type": "string"
+        }
+      },
+      "required": [
+        "outcome",
+        "message"
+      ],
+      "title": "ManagedRootUnavailableResultView",
+      "type": "object"
+    },
+    "ManagedRootView": {
+      "properties": {
+        "displayPath": {
+          "title": "Displaypath",
+          "type": "string"
+        },
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "available",
+            "unavailable"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "displayPath",
+        "status"
+      ],
+      "title": "ManagedRootView",
+      "type": "object"
+    },
+    "ManagedRootsAddParams": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "ManagedRootsAddParams",
+      "type": "object"
+    },
+    "ManagedRootsListParams": {
+      "properties": {},
+      "title": "ManagedRootsListParams",
+      "type": "object"
+    },
+    "ManagedRootsRemoveParams": {
+      "properties": {
+        "managedRootId": {
+          "format": "uuid",
+          "title": "Managedrootid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "managedRootId"
+      ],
+      "title": "ManagedRootsRemoveParams",
+      "type": "object"
+    },
+    "PlanCreateParams": {
+      "properties": {
+        "policyDecisionIds": {
+          "items": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "title": "Policydecisionids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "policyDecisionIds"
+      ],
+      "title": "PlanCreateParams",
+      "type": "object"
+    },
+    "PlanItemView": {
+      "properties": {
+        "actionId": {
+          "format": "uuid",
+          "title": "Actionid",
+          "type": "string"
+        },
+        "categoryLabel": {
+          "title": "Categorylabel",
+          "type": "string"
+        },
+        "destinationDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Destinationdisplaypath"
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "selectable": {
+          "title": "Selectable",
+          "type": "boolean"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "sourceDisplayPath": {
+          "title": "Sourcedisplaypath",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "actionId",
+        "filename",
+        "sourceDisplayPath",
+        "destinationDisplayPath",
+        "categoryLabel",
+        "status",
+        "title",
+        "detail",
+        "severity",
+        "selectable"
+      ],
+      "title": "PlanItemView",
+      "type": "object"
+    },
+    "PlanSummaryView": {
+      "properties": {
+        "blocked": {
+          "title": "Blocked",
+          "type": "integer"
+        },
+        "conflicts": {
+          "title": "Conflicts",
+          "type": "integer"
+        },
+        "filesTotal": {
+          "title": "Filestotal",
+          "type": "integer"
+        },
+        "invalid": {
+          "title": "Invalid",
+          "type": "integer"
+        },
+        "issues": {
+          "title": "Issues",
+          "type": "integer"
+        },
+        "noAction": {
+          "title": "Noaction",
+          "type": "integer"
+        },
+        "protected": {
+          "title": "Protected",
+          "type": "integer"
+        },
+        "ready": {
+          "title": "Ready",
+          "type": "integer"
+        },
+        "reviewRequired": {
+          "title": "Reviewrequired",
+          "type": "integer"
+        },
+        "skipped": {
+          "title": "Skipped",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "filesTotal",
+        "ready",
+        "reviewRequired",
+        "conflicts",
+        "invalid",
+        "blocked",
+        "skipped",
+        "noAction",
+        "protected",
+        "issues"
+      ],
+      "title": "PlanSummaryView",
+      "type": "object"
+    },
+    "PlanView": {
+      "properties": {
+        "id": {
+          "format": "uuid",
+          "title": "Id",
+          "type": "string"
+        },
+        "items": {
+          "items": {
+            "$ref": "#/$defs/PlanItemView"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "managedRootId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Managedrootid"
+        },
+        "outcome": {
+          "const": "ok",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "rootDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rootdisplaypath"
+        },
+        "structuralProtectionNote": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Structuralprotectionnote"
+        },
+        "summary": {
+          "$ref": "#/$defs/PlanSummaryView"
+        }
+      },
+      "required": [
+        "outcome",
+        "id",
+        "managedRootId",
+        "rootDisplayPath",
+        "items",
+        "summary",
+        "structuralProtectionNote"
+      ],
+      "title": "PlanView",
+      "type": "object"
+    },
+    "RecentHistoryView": {
+      "properties": {
+        "rows": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/BatchHistoryEntryView"
+              },
+              {
+                "$ref": "#/$defs/UnavailableBatchHistoryRowView"
+              }
+            ]
+          },
+          "title": "Rows",
+          "type": "array"
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "title": "RecentHistoryView",
+      "type": "object"
+    },
+    "RecoveryRestoreCaptureParams": {
+      "properties": {
+        "captureId": {
+          "format": "uuid",
+          "title": "Captureid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "captureId"
+      ],
+      "title": "RecoveryRestoreCaptureParams",
+      "type": "object"
+    },
+    "RecoveryUndoTransactionParams": {
+      "properties": {
+        "transactionId": {
+          "format": "uuid",
+          "title": "Transactionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transactionId"
+      ],
+      "title": "RecoveryUndoTransactionParams",
+      "type": "object"
+    },
+    "RemoveManagedRootResultView": {
+      "properties": {
+        "managedRootId": {
+          "format": "uuid",
+          "title": "Managedrootid",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserMessageView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "managedRootId",
+        "status",
+        "message"
+      ],
+      "title": "RemoveManagedRootResultView",
+      "type": "object"
+    },
+    "RestoreResultView": {
+      "properties": {
+        "captureId": {
+          "format": "uuid",
+          "title": "Captureid",
+          "type": "string"
+        },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserMessageView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recoveryId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recoveryid"
+        },
+        "restoredDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Restoreddisplaypath"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "rejected",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "captureId",
+        "recoveryId",
+        "status",
+        "restoredDisplayPath",
+        "message"
+      ],
+      "title": "RestoreResultView",
+      "type": "object"
+    },
+    "ReviewActionParams": {
+      "properties": {
+        "note": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Note"
+        },
+        "policyDecisionId": {
+          "format": "uuid",
+          "title": "Policydecisionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policyDecisionId"
+      ],
+      "title": "ReviewActionParams",
+      "type": "object"
+    },
+    "ReviewActionResultView": {
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserMessageView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "policyDecisionId": {
+          "format": "uuid",
+          "title": "Policydecisionid",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policyDecisionId",
+        "status",
+        "message"
+      ],
+      "title": "ReviewActionResultView",
+      "type": "object"
+    },
+    "UnavailableBatchHistoryRowView": {
+      "properties": {
+        "batchId": {
+          "format": "uuid",
+          "title": "Batchid",
+          "type": "string"
+        },
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
+        },
+        "rowType": {
+          "const": "unavailable",
+          "title": "Rowtype",
+          "type": "string"
+        },
+        "startedAt": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Startedat"
+        }
+      },
+      "required": [
+        "rowType",
+        "batchId",
+        "startedAt",
+        "message"
+      ],
+      "title": "UnavailableBatchHistoryRowView",
+      "type": "object"
+    },
+    "UndoResultView": {
+      "properties": {
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserMessageView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recoveryId": {
+          "anyOf": [
+            {
+              "format": "uuid",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Recoveryid"
+        },
+        "restoredDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Restoreddisplaypath"
+        },
+        "status": {
+          "enum": [
+            "succeeded",
+            "rejected",
+            "failed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "transactionId": {
+          "format": "uuid",
+          "title": "Transactionid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "transactionId",
+        "recoveryId",
+        "status",
+        "restoredDisplayPath",
+        "message"
+      ],
+      "title": "UndoResultView",
+      "type": "object"
+    },
+    "UserMessageView": {
+      "properties": {
+        "detail": {
+          "title": "Detail",
+          "type": "string"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "suggestedAction": {
+          "title": "Suggestedaction",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "detail",
+        "severity",
+        "suggestedAction"
+      ],
+      "title": "UserMessageView",
+      "type": "object"
+    }
+  }
+}

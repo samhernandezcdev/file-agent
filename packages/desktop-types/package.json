@@ -1,0 +1,16 @@
+{
+  "name": "@file-agent/desktop-types",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "generated/index.ts",
+  "types": "generated/index.ts",
+  "scripts": {
+    "generate": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15",
+    "typescript": "~5.8.3"
+  }
+}

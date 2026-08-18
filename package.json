@@ -1,0 +1,13 @@
+{
+  "name": "file-agent-workspace",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "pnpm --filter desktop tauri dev",
+    "build": "pnpm --filter desktop tauri build",
+    "lint": "pnpm --filter desktop lint",
+    "typecheck": "pnpm --filter desktop typecheck",
+    "test": "pnpm --filter desktop test",
+    "e2e": "pnpm --filter desktop e2e"
+  }
+}

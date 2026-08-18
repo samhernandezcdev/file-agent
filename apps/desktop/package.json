@@ -1,0 +1,52 @@
+{
+  "name": "desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri",
+    "lint": "eslint src",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build:e2e": "cross-env VITE_E2E=true vite build",
+    "build:e2e:tauri": "tauri build --debug --no-bundle --features e2e-testing --config src-tauri/tauri.e2e.conf.json",
+    "e2e": "pnpm run build:e2e && pnpm run build:e2e:tauri && wdio run wdio.conf.ts"
+  },
+  "dependencies": {
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tanstack/react-query": "^5",
+    "@file-agent/desktop-types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4",
+    "@tauri-apps/cli": "^2",
+    "vitest": "^3",
+    "@testing-library/react": "^16",
+    "@testing-library/jest-dom": "^6",
+    "@testing-library/user-event": "^14",
+    "jsdom": "^25",
+    "eslint": "^9",
+    "@eslint/js": "^9",
+    "typescript-eslint": "^8",
+    "eslint-plugin-react-hooks": "^5",
+    "@wdio/cli": "^9",
+    "@wdio/local-runner": "^9",
+    "@wdio/mocha-framework": "^9",
+    "@wdio/spec-reporter": "^9",
+    "@wdio/tauri-service": "^1",
+    "@wdio/tauri-plugin": "^1",
+    "cross-env": "^7",
+    "ts-node": "^10"
+  }
+}

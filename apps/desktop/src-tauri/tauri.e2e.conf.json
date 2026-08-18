@@ -1,0 +1,19 @@
+{
+  "build": {
+    "beforeBuildCommand": "pnpm run build:e2e"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "default",
+        {
+          "identifier": "e2e",
+          "description": "E2E-only capability -- adds the WebdriverIO test-hook plugin's permission. Defined INLINE here, never as a file under capabilities/, so the normal build never discovers or validates a `wdio:default` permission reference against plugins that aren't compiled in (tauri-plugin-wdio/tauri-plugin-wdio-webdriver are optional, gated by the e2e-testing Cargo feature this same config is always paired with).",
+          "windows": ["main"],
+          "permissions": ["wdio:default"]
+        }
+      ]
+    }
+  }
+}
