@@ -24,11 +24,19 @@ def test_repeated_scans_of_same_path_do_not_overwrite_unrelated_observations(
 
     scan1 = make_completed_scan(files_discovered=1)
     file1 = make_discovered_file(scan_id=scan1.id, path=shared_path)
-    store.record_scan(ScanResult(scan_run=scan1, files=(file1,), events=(), issues=()))
+    store.record_scan(
+        ScanResult(
+            scan_run=scan1, files=(file1,), events=(), issues=(), protected_trees=()
+        )
+    )
 
     scan2 = make_completed_scan(files_discovered=1)
     file2 = make_discovered_file(scan_id=scan2.id, path=shared_path)
-    store.record_scan(ScanResult(scan_run=scan2, files=(file2,), events=(), issues=()))
+    store.record_scan(
+        ScanResult(
+            scan_run=scan2, files=(file2,), events=(), issues=(), protected_trees=()
+        )
+    )
 
     assert file1.id != file2.id
     fetched1 = store.get_discovered_file(file1.id)

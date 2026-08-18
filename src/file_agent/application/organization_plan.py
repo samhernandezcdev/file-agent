@@ -43,6 +43,14 @@ class PlanStatus(str, Enum):
     CONFLICT = "conflict"  # destination-side filesystem readiness problem only
     INVALID = "invalid"  # trusted item identity exists, but a downstream fact (review history) is ambiguous/malformed
     NO_ACTION = "no_action"
+    PROTECTED = "protected"
+    """FA-016: find_structural_protection found the source and/or
+    prospective destination structurally protected -- a Protected Tree, a
+    hard exclusion, or an inconclusive structural inspection. Distinct from
+    BLOCKED (a policy-level refusal): PROTECTED is a filesystem
+    structural-safety refusal. Human review can never make a PROTECTED item
+    READY -- this status is checked before, and takes precedence over,
+    REVIEW_REQUIRED presentation."""
 
 
 class PlanReasonCode(str, Enum):
@@ -61,6 +69,10 @@ class PlanReasonCode(str, Enum):
     SOURCE_ALREADY_AT_DESTINATION = "source_already_at_destination"
     AMBIGUOUS_REVIEW_HISTORY = "ambiguous_review_history"
     MALFORMED_EVENT_PAYLOAD = "malformed_event_payload"
+    STRUCTURALLY_PROTECTED = "structurally_protected"
+    """FA-016 -- .value matches ApplicationRejectionReason.STRUCTURALLY_PROTECTED
+    exactly, so the shared Spanish rejection_reason_detail lookup works
+    uniformly across both enums."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +115,10 @@ class OrganizationPlanSummary:
     blocked: int
     skipped: int
     no_action: int
+    protected: int
+    """FA-016: count of items whose status is PlanStatus.PROTECTED --
+    aggregates BOTH source-side and destination-side structural rejections,
+    and every StructuralProtectionKind/inspection-failure cause uniformly."""
     issues: int
 
 

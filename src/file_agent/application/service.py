@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 from weakref import WeakKeyDictionary
 
+from file_agent import structural_safety
 from file_agent.application import history, managed_roots, queries
 from file_agent.application.dto import (
     AnalysisFailure,
@@ -167,6 +168,23 @@ def _capture_lookup_reason(
         queries.LookupStatus.AMBIGUOUS: ApplicationRejectionReason.AMBIGUOUS_CAPTURE_HISTORY,
         queries.LookupStatus.INCOMPLETE: ApplicationRejectionReason.REQUESTED_WITHOUT_TERMINAL,
     }[status]
+
+
+def _structural_detail(
+    outcome: "structural_safety.StructuralProtection | structural_safety.StructuralInspectionFailure",
+) -> str:
+    """FA-016: renders a find_structural_protection outcome into the free-
+    text `reason`/`detail` field every rejection DTO already carries
+    alongside its reason_code -- English/technical, audit-only, never shown
+    verbatim in Spanish (matches ManagedRootPathFailure.detail's own
+    precedent). The three causes (Protected Tree, hard exclusion, inconclusive
+    inspection) are deliberately NOT distinguished by reason_code -- only
+    here, for anyone reading raw history/logs."""
+    if isinstance(outcome, structural_safety.StructuralInspectionFailure):
+        return outcome.detail
+    if outcome.kind is structural_safety.StructuralProtectionKind.HARD_EXCLUSION:
+        return f"path is beneath a hard-excluded directory: {outcome.excluded_name}"
+    return f"path is inside a protected project tree rooted at {outcome.root_path}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,6 +443,7 @@ class FileAgentApplicationService:
             items=tuple(items),
             failures=tuple(failures),
             files_discovered=len(scan_result.files),
+            protected_trees=scan_result.protected_trees,
         )
 
     def analyze_file(self, file_id: UUID) -> AnalyzedItem | AnalysisFailure:
@@ -452,6 +471,25 @@ class FileAgentApplicationService:
                 reason_code=ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
             )
         sandbox_root = root_outcome
+
+        # FA-016: structural safety checked BEFORE the re-stat below --
+        # re-stat only reports whether *something* currently exists at this
+        # path, which is a strictly weaker question than "is this path
+        # itself, or one of its ancestors, a reparse point/protected tree/
+        # hard exclusion." A hijacked ancestor redirecting to an external
+        # location that happens to have nothing at the equivalent leaf path
+        # would otherwise surface as a misleading "not_found" here, never
+        # reaching the structural check inside _analyze_discovered at all.
+        structural_outcome = structural_safety.find_structural_protection(
+            discovered.path, sandbox_root.path, inspect_candidate_reference=True
+        )
+        if structural_outcome is not None:
+            return AnalysisFailure(
+                file_id=file_id,
+                path=discovered.path,
+                reason_code=ApplicationRejectionReason.STRUCTURALLY_PROTECTED.value,
+            )
+
         try:
             st = discovered.path.stat()
         except OSError:
@@ -476,6 +514,26 @@ class FileAgentApplicationService:
     def _analyze_discovered(
         self, discovered: DiscoveredFile, sandbox_root: SandboxRoot
     ) -> AnalyzedItem | AnalysisFailure:
+        # FA-016: structural safety runs before classification -- the ONE
+        # gate closing both "newly protected" and "historical/pre-FA-016
+        # DiscoveredFile row now sitting under a Protected Tree or hard
+        # exclusion" (no new scan required either way, since this is a live,
+        # filesystem-based re-check, never dependent on when/how `discovered`
+        # was originally persisted). inspect_candidate_reference=True: this
+        # is an EXISTING source object, so the candidate itself -- not just
+        # its ancestors -- must be conclusively proven not to have been
+        # individually replaced by a symlink/junction/reparse object since
+        # discovery.
+        structural_outcome = structural_safety.find_structural_protection(
+            discovered.path, sandbox_root.path, inspect_candidate_reference=True
+        )
+        if structural_outcome is not None:
+            return AnalysisFailure(
+                file_id=discovered.id,
+                path=discovered.path,
+                reason_code=ApplicationRejectionReason.STRUCTURALLY_PROTECTED.value,
+            )
+
         hash_outcome = FileHasher(sandbox_root, clock=self._clock).hash_file(discovered)
         if isinstance(hash_outcome, HashFailure):
             return AnalysisFailure(
@@ -925,6 +983,29 @@ class FileAgentApplicationService:
             )
         sandbox_root = root_outcome
 
+        # FA-016 source live structural check -- the actual, unconditionally
+        # load-bearing check for source-side structural safety, exactly
+        # mirroring FA-015 layer 2's rationale above: apply_item bypasses
+        # any batch-level gate entirely, so this must be re-derived fresh
+        # here to be load-bearing at all. inspect_candidate_reference=True:
+        # discovered.path is an existing source object -- verified itself,
+        # not just its ancestors, before anything downstream proceeds.
+        source_structural_outcome = structural_safety.find_structural_protection(
+            discovered.path, sandbox_root.path, inspect_candidate_reference=True
+        )
+        if source_structural_outcome is not None:
+            return _ApplyOutcome(
+                policy_decision_id,
+                proposal.id,
+                discovered.id,
+                discovered.filename,
+                ApplicationOutcomeStatus.REJECTED,
+                None,
+                None,
+                ApplicationRejectionReason.STRUCTURALLY_PROTECTED.value,
+                _structural_detail(source_structural_outcome),
+            )
+
         assert proposal.proposed_destination_category is not None, (
             "AUTO and REVIEW+APPROVE both structurally guarantee a proposed "
             "destination -- PolicyEngine never produces AUTO without one, "
@@ -936,6 +1017,31 @@ class FileAgentApplicationService:
             proposal.proposed_destination_category,
             discovered.filename,
         )
+
+        # FA-016 destination live structural check -- symmetric with the
+        # source check above: a file must never be moved INTO a destination
+        # that is itself structurally protected, re-derived fresh on every
+        # call, independent of whatever a prior preview found.
+        # inspect_candidate_reference=False: destination_path normally does
+        # not exist yet -- only its ancestor chain (from .parent up to
+        # sandbox_root.path) is inspected; its own nonexistence is never
+        # itself a failure. An existing-but-unsafe destination leaf remains
+        # TransactionEngine's own, separate, unmodified responsibility.
+        destination_structural_outcome = structural_safety.find_structural_protection(
+            destination_path, sandbox_root.path, inspect_candidate_reference=False
+        )
+        if destination_structural_outcome is not None:
+            return _ApplyOutcome(
+                policy_decision_id,
+                proposal.id,
+                discovered.id,
+                discovered.filename,
+                ApplicationOutcomeStatus.REJECTED,
+                None,
+                destination_path,
+                ApplicationRejectionReason.STRUCTURALLY_PROTECTED.value,
+                _structural_detail(destination_structural_outcome),
+            )
 
         request = TransactionRequest(
             file_id=discovered.id,

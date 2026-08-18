@@ -11,6 +11,8 @@ here ever feeds back into authorization or control flow, and no Spanish
 string is ever added to a domain enum or engine.
 """
 
+from collections.abc import Sequence
+
 from file_agent.application.dto import (
     BatchApplyItemResult,
     BatchApplyItemStatus,
@@ -35,6 +37,7 @@ from file_agent.application.managed_roots import (
 )
 from file_agent.application.organization_plan import OrganizationPlanItem, PlanStatus
 from file_agent.presentation.messages import Severity, SuggestedAction, UserMessage
+from file_agent.structural_safety import StructuralProtection
 
 # --- Status vocabulary -------------------------------------------------------
 
@@ -46,6 +49,7 @@ _PLAN_STATUS_LABEL: dict[PlanStatus, str] = {
     PlanStatus.BLOCKED: "No se moverá por seguridad",
     PlanStatus.SKIPPED: "Omitido",
     PlanStatus.NO_ACTION: "No necesita cambios",
+    PlanStatus.PROTECTED: "Carpeta protegida",
 }
 
 _BATCH_ITEM_STATUS_LABEL: dict[BatchApplyItemStatus, str] = {
@@ -130,6 +134,7 @@ _REASON_DETAIL: dict[str, str] = {
         "FileAgent ya no administra esta carpeta. Agrégala de nuevo y "
         "vuelve a analizarla si quieres organizarla."
     ),
+    "structurally_protected": "Esta carpeta está protegida y no se organizará.",
 }
 
 _FALLBACK_DETAIL = (
@@ -161,6 +166,7 @@ _PLAN_STATUS_SEVERITY: dict[PlanStatus, Severity] = {
     PlanStatus.BLOCKED: Severity.ERROR,
     PlanStatus.SKIPPED: Severity.INFO,
     PlanStatus.NO_ACTION: Severity.INFO,
+    PlanStatus.PROTECTED: Severity.INFO,
 }
 
 _PLAN_STATUS_ACTION: dict[PlanStatus, SuggestedAction] = {
@@ -171,6 +177,7 @@ _PLAN_STATUS_ACTION: dict[PlanStatus, SuggestedAction] = {
     PlanStatus.BLOCKED: SuggestedAction.NONE,
     PlanStatus.SKIPPED: SuggestedAction.NONE,
     PlanStatus.NO_ACTION: SuggestedAction.NONE,
+    PlanStatus.PROTECTED: SuggestedAction.NONE,
 }
 
 _PLAN_READY_DETAIL = "Este archivo está listo para organizarse."
@@ -412,3 +419,53 @@ def restore_historical_root_unavailable_message() -> UserMessage:
         severity=Severity.ERROR,
         suggested_action=SuggestedAction.NONE,
     )
+
+
+# --- FA-016: Protected Trees & Exclusions ---------------------------------
+#
+# "Protected Tree"/"structural protection"/"marker"/"hard exclusion" are
+# never exposed as user-facing vocabulary -- "esta carpeta parece formar
+# parte de un proyecto" / "carpeta protegida" is the only framing. These
+# messages render an already-final, read-only decision (a scan's
+# AnalyzedScanResult.protected_trees, or an already-computed
+# PlanStatus.PROTECTED/STRUCTURALLY_PROTECTED outcome); they never
+# influence which files are eligible for organization.
+
+_PROTECTED_TREE_FOUND_DETAIL = (
+    "FileAgent dejó esta carpeta intacta porque parece formar parte de un proyecto."
+)
+_STRUCTURAL_PROTECTION_NOTE = (
+    "Algunos archivos no se organizaron para evitar modificar la "
+    "estructura de un proyecto."
+)
+
+
+def protected_trees_summary_message(
+    protected_trees: Sequence[StructuralProtection],
+) -> UserMessage | None:
+    """Renders AnalyzedScanResult.protected_trees -- one message for the
+    WHOLE scan (never one per excluded file, matching the aggregate-not-
+    per-file design), or None if the scan found nothing to protect. A
+    single, deliberately un-itemized message even when multiple project
+    folders were found -- naming/counting them individually would start
+    exposing internal structural detail this layer is meant to abstract
+    away."""
+    if not protected_trees:
+        return None
+    return UserMessage(
+        title="Se encontró un proyecto.",
+        detail=_PROTECTED_TREE_FOUND_DETAIL,
+        severity=Severity.INFO,
+        suggested_action=SuggestedAction.NONE,
+    )
+
+
+def structural_protection_note(protected_count: int) -> str | None:
+    """A plan/batch-level explanatory note for when >=1 item's status is
+    PlanStatus.PROTECTED -- callers append this to whatever summary message
+    (plan or batch) they are already rendering. None if nothing was
+    structurally protected, so callers can skip the note entirely rather
+    than rendering an empty addition."""
+    if protected_count <= 0:
+        return None
+    return _STRUCTURAL_PROTECTION_NOTE

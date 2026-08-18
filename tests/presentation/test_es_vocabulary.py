@@ -37,6 +37,16 @@ FORBIDDEN_JARGON = (
     "root authority",
     "managed_root_id",
     "filesystem boundary",
+    "ProtectedTree",
+    "StructuralProtection",
+    "marker",
+    "hard exclusion",
+    "scanner exclusion",
+    "structural eligibility",
+    "reparse",
+    "authorization",
+    "policy",
+    "kind",
 )
 
 
@@ -88,6 +98,35 @@ def _all_rendered_strings() -> list[str]:
     ):
         strings.append(message.title)
         strings.append(message.detail)
+
+    from pathlib import Path
+
+    from file_agent.structural_safety import (
+        ProjectMarkerType,
+        StructuralProtection,
+        StructuralProtectionKind,
+    )
+
+    protected_tree_message = es.protected_trees_summary_message(
+        [
+            StructuralProtection(
+                kind=StructuralProtectionKind.PROTECTED_TREE,
+                root_path=Path("C:/Users/Ana/Downloads/project").resolve(),
+                marker=ProjectMarkerType.PYPROJECT_TOML,
+                marker_path=Path(
+                    "C:/Users/Ana/Downloads/project/pyproject.toml"
+                ).resolve(),
+                excluded_name=None,
+            )
+        ]
+    )
+    assert protected_tree_message is not None
+    strings.append(protected_tree_message.title)
+    strings.append(protected_tree_message.detail)
+
+    note = es.structural_protection_note(3)
+    assert note is not None
+    strings.append(note)
 
     return strings
 

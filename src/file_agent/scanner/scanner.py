@@ -30,6 +30,11 @@ from file_agent.scanner._paths import file_times_from_stat, resolve_reference_ta
 from file_agent.scanner.issues import ScanIssue, ScanIssueSeverity, ScanIssueType
 from file_agent.scanner.result import ScanResult
 from file_agent.scanner.sandbox_root import SandboxRoot
+from file_agent.structural_safety import (
+    StructuralProtection,
+    classify_directory,
+    is_hard_excluded_directory_name,
+)
 
 
 def _utc_now() -> datetime:
@@ -56,19 +61,39 @@ class DirectoryScanner:
         scan_run = ScanRun(root_path=self._sandbox_root.path, started_at=self._clock())
         scan_run = scan_run.evolve(status=ScanStatus.RUNNING)
         self._scan_id = scan_run.id
+        root_path = self._sandbox_root.path
 
         files: list[DiscoveredFile] = []
         events: list[DomainEvent] = []
         issues: list[ScanIssue] = []
+        protected_trees: list[StructuralProtection] = []
         aborted = False
 
+        # FA-016: checked FIRST, zero I/O, before even attempting to list the
+        # root's contents -- if the Managed Root's own basename is
+        # hard-excluded, the ENTIRE root is structurally protected,
+        # unconditionally. Managed Root authority (FA-015) never exempts
+        # root_path from this layer. Silent, consistent with hard-exclusion's
+        # established treatment at every other depth -- no protected_trees
+        # entry, no event, matching how a node_modules/ found deeper in the
+        # tree is also never individually reported.
+        if is_hard_excluded_directory_name(root_path.name):
+            scan_run = scan_run.evolve(
+                status=ScanStatus.COMPLETED,
+                completed_at=self._clock(),
+                files_discovered=0,
+            )
+            return ScanResult(
+                scan_run=scan_run, files=(), events=(), issues=(), protected_trees=()
+            )
+
         try:
-            root_entries = list(os.scandir(self._sandbox_root.path))
+            root_entries = list(os.scandir(root_path))
         except OSError as exc:
             aborted = True
             issues.append(
                 self._issue(
-                    self._sandbox_root.path,
+                    root_path,
                     ScanIssueType.SCAN_ABORTED,
                     ScanIssueSeverity.CRITICAL,
                     f"sandbox root became inaccessible: {exc}",
@@ -78,13 +103,24 @@ class DirectoryScanner:
 
         if not aborted:
             try:
-                for entry in root_entries:
-                    self._process_entry(entry, files, events, issues)
+                # FA-016: marker-based root protection -- the Managed Root's
+                # own directory is classified exactly like any other
+                # directory (reached only once hard-exclusion-by-name has
+                # already been ruled out above).
+                root_membership = classify_directory(root_path, root_entries)
+                if root_membership is not None:
+                    protected_trees.append(root_membership)
+                    events.append(self._build_protected_tree_event(root_membership))
+                else:
+                    for entry in root_entries:
+                        self._process_entry(
+                            entry, files, events, issues, protected_trees
+                        )
             except Exception as exc:  # noqa: BLE001 -- defensive: run() must never raise
                 aborted = True
                 issues.append(
                     self._issue(
-                        self._sandbox_root.path,
+                        root_path,
                         ScanIssueType.SCAN_ABORTED,
                         ScanIssueSeverity.CRITICAL,
                         f"unexpected error during scan: {exc}",
@@ -100,6 +136,7 @@ class DirectoryScanner:
             files=tuple(files),
             events=tuple(events),
             issues=tuple(issues),
+            protected_trees=tuple(protected_trees),
         )
 
     def _walk_subdirectory(
@@ -108,6 +145,7 @@ class DirectoryScanner:
         files: list[DiscoveredFile],
         events: list[DomainEvent],
         issues: list[ScanIssue],
+        protected_trees: list[StructuralProtection],
     ) -> None:
         try:
             entries = list(os.scandir(directory))
@@ -131,8 +169,17 @@ class DirectoryScanner:
                 )
             )
             return
+        # FA-016: marker-based classification, reusing the already-
+        # materialized `entries` list -- zero extra I/O. A match prunes this
+        # entire subtree (marker's own directory inclusive) wholesale; none
+        # of `entries` is processed further.
+        membership = classify_directory(directory, entries)
+        if membership is not None:
+            protected_trees.append(membership)
+            events.append(self._build_protected_tree_event(membership))
+            return
         for entry in entries:
-            self._process_entry(entry, files, events, issues)
+            self._process_entry(entry, files, events, issues, protected_trees)
 
     def _process_entry(
         self,
@@ -140,6 +187,7 @@ class DirectoryScanner:
         files: list[DiscoveredFile],
         events: list[DomainEvent],
         issues: list[ScanIssue],
+        protected_trees: list[StructuralProtection],
     ) -> None:
         # FileAgent-owned internal artifacts (e.g. RecoveryEngine's reserved
         # restore-temp namespace) are invisible to organization scanning --
@@ -148,6 +196,17 @@ class DirectoryScanner:
         # DiscoveredFile, no FILE_DISCOVERED event, no ScanIssue either --
         # it is fully skipped, not modeled as UNKNOWN/OTHER/REVIEW/BLOCK.
         if is_file_agent_internal_artifact(entry.name):
+            return
+        # FA-016: hard-exclusion-by-name, checked next -- zero I/O, before
+        # symlink/junction detection so an excluded directory that happens
+        # to be a reference doesn't generate a spurious NOT_FOLLOWED issue
+        # for something already being silently excluded by name. Directories
+        # only (is_dir(follow_symlinks=False) is False for a symlink/
+        # junction entry, so those fall through unchanged to the existing
+        # reference handling below).
+        if entry.is_dir(follow_symlinks=False) and is_hard_excluded_directory_name(
+            entry.name
+        ):
             return
         entry_path = Path(entry.path)
         try:
@@ -169,7 +228,9 @@ class DirectoryScanner:
                 )
                 return
             if stat.S_ISDIR(st.st_mode):
-                self._walk_subdirectory(entry_path, files, events, issues)
+                self._walk_subdirectory(
+                    entry_path, files, events, issues, protected_trees
+                )
             elif stat.S_ISREG(st.st_mode):
                 discovered = self._build_discovered_file(entry_path, st)
                 files.append(discovered)
@@ -271,6 +332,30 @@ class DirectoryScanner:
             entity_id=discovered.id,
             timestamp=self._clock(),
             payload={"scan_id": str(self._scan_id), "path": str(discovered.path)},
+        )
+
+    def _build_protected_tree_event(
+        self, membership: StructuralProtection
+    ) -> DomainEvent:
+        """FA-016: one event per detected marker-based Protected Tree root --
+        every membership reaching this call site is guaranteed
+        kind=PROTECTED_TREE, since classify_directory (the only producer of
+        protected_trees entries at scan time) never returns a HARD_EXCLUSION
+        result. entity_type=SCAN, entity_id=scan_run.id, mirroring how
+        FILE_DISCOVERED is keyed off this same scan."""
+        assert membership.marker is not None and membership.marker_path is not None
+        assert self._scan_id is not None
+        return DomainEvent(
+            event_type=EventType.PROTECTED_TREE_DETECTED,
+            entity_type=EntityType.SCAN,
+            entity_id=self._scan_id,
+            timestamp=self._clock(),
+            payload={
+                "scan_id": str(self._scan_id),
+                "root_path": str(membership.root_path),
+                "marker": membership.marker.value,
+                "marker_path": str(membership.marker_path),
+            },
         )
 
     def _issue(

@@ -124,6 +124,8 @@ def make_scan_result(
             )
             for f in files
         )
-        return ScanResult(scan_run=scan, files=files, events=events, issues=())
+        return ScanResult(
+            scan_run=scan, files=files, events=events, issues=(), protected_trees=()
+        )
 
     return _make

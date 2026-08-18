@@ -32,7 +32,9 @@ def test_orphan_scan_id_rejected_by_foreign_key(
     orphan = make_discovered_file(
         scan_id=uuid4()
     )  # references a scan that never exists
-    result = ScanResult(scan_run=scan, files=(orphan,), events=(), issues=())
+    result = ScanResult(
+        scan_run=scan, files=(orphan,), events=(), issues=(), protected_trees=()
+    )
     with pytest.raises(IntegrityConstraintError):
         store.record_scan(result)
 
@@ -41,9 +43,15 @@ def test_duplicate_scan_id_rejected(
     store: FileAgentStore, make_completed_scan: Callable[..., ScanRun]
 ) -> None:
     scan = make_completed_scan(files_discovered=0)
-    store.record_scan(ScanResult(scan_run=scan, files=(), events=(), issues=()))
+    store.record_scan(
+        ScanResult(scan_run=scan, files=(), events=(), issues=(), protected_trees=())
+    )
     with pytest.raises(IntegrityConstraintError):
-        store.record_scan(ScanResult(scan_run=scan, files=(), events=(), issues=()))
+        store.record_scan(
+            ScanResult(
+                scan_run=scan, files=(), events=(), issues=(), protected_trees=()
+            )
+        )
 
 
 def test_duplicate_event_identical_content_is_idempotent(

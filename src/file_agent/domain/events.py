@@ -35,6 +35,11 @@ class EventType(str, Enum):
     BATCH_APPLY_STARTED = "batch_apply_started"
     BATCH_ITEM_RECORDED = "batch_item_recorded"
     BATCH_APPLY_COMPLETED = "batch_apply_completed"
+    PROTECTED_TREE_DETECTED = "protected_tree_detected"
+    """FA-016: one event per detected marker-based Protected Tree root, per
+    scan (never per file). entity_type=SCAN, entity_id=scan_run.id. Hard
+    exclusions never produce this event -- they remain silent, matching the
+    pre-existing internal-artifact exclusion's own silent treatment."""
 
 
 class EntityType(str, Enum):

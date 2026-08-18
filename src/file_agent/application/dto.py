@@ -11,6 +11,7 @@ from pathlib import Path
 from uuid import UUID
 
 from file_agent.domain import DestinationCategory, FileCategory, PolicyOutcome
+from file_agent.structural_safety import StructuralProtection
 
 
 class ApplicationOutcomeStatus(str, Enum):
@@ -57,6 +58,15 @@ class ApplicationRejectionReason(str, Enum):
     (legacy pre-FA-015 data), a missing ManagedRootRow, or a currently
     unresolvable/unsafe path. Never distinguished further at this level --
     see _resolve_historical_root."""
+    STRUCTURALLY_PROTECTED = "structurally_protected"
+    """FA-016: find_structural_protection found the source and/or
+    destination structurally protected (a Protected Tree, a hard exclusion,
+    or an inconclusive structural inspection -- all three deliberately
+    collapse to this single, undifferentiated reason at this level). Used by
+    analyze_file, create_organization_plan, and apply_item/apply_items (via
+    _apply_one's source and destination live re-checks). Never applied to
+    undo_transaction/restore_capture -- structural safety does not gate
+    historically-authorized recovery."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +100,11 @@ class AnalyzedScanResult:
     items: tuple[AnalyzedItem, ...]
     failures: tuple[AnalysisFailure, ...]
     files_discovered: int
+    protected_trees: tuple[StructuralProtection, ...]
+    """FA-016: propagated from ScanResult.protected_trees -- one entry per
+    detected marker-based Protected Tree root this scan found and pruned,
+    never one entry per excluded file. Hard exclusions are never
+    represented here (they remain silent, matching scan-time convention)."""
 
 
 @dataclass(frozen=True, slots=True)

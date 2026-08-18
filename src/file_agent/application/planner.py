@@ -43,14 +43,24 @@ detect a Mixed-root selection BEFORE any filesystem inspection:
   Phase 3 -- verify the single agreed root is currently active and
              live-safe (managed_roots._resolve_safe_managed_root); return
              ManagedRootUnavailable if not.
-  Phase 4 -- finish building each resolved context's OrganizationPlanItem
-             (destination resolution, inspect_destination, status/reason)
-             against the now-validated, live SandboxRoot.
+  Phase 3.5 (FA-016) -- source-side live structural check for every
+             resolved context, against the now-validated live SandboxRoot.
+             A structurally protected source short-circuits straight to a
+             PlanStatus.PROTECTED item -- it never reaches Phase 4's
+             destination resolution/inspect_destination at all.
+  Phase 4 -- finish building each remaining resolved context's
+             OrganizationPlanItem (destination resolution, a FA-016
+             destination-side live structural check, inspect_destination,
+             status/reason) against the now-validated, live SandboxRoot.
 
 Phases 1 and 4 together are exactly the work this module always did per
 item; the restructuring only splits it at its natural existing seam
 (resolve-lineage vs. compute-destination) and runs each half as one
-batch-wide pass instead of interleaved per item -- no extra cost.
+batch-wide pass instead of interleaved per item -- no extra cost. FA-016's
+structural checks are inherently PER-FILE (source) and PER-DESTINATION,
+unlike FA-015's root-liveness check -- there is no single check that can
+cover an entire plan the way Phase 3 does; every resolved context's own
+ancestor chain must be independently walked.
 """
 
 from collections.abc import Callable, Sequence
@@ -59,6 +69,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from file_agent import structural_safety
 from file_agent.application import managed_roots, queries
 from file_agent.application.dto import ApplicationRejectionReason
 from file_agent.application.errors import (
@@ -92,6 +103,10 @@ from file_agent.domain import (
 )
 from file_agent.persistence import AppPaths, FileAgentStore
 from file_agent.scanner import SandboxRoot
+from file_agent.structural_safety import (
+    StructuralInspectionFailure,
+    StructuralProtection,
+)
 
 
 def _utc_now() -> datetime:
@@ -191,9 +206,28 @@ def build_organization_plan(
         )
     sandbox_root = root_outcome
 
+    # Phase 3.5 (FA-016): source-side live structural check, re-derived
+    # fresh against the now-validated sandbox_root -- never assumed from
+    # analysis time. A structurally protected source never reaches Phase
+    # 4's _finish_item at all (destination resolution/inspect_destination
+    # would be irrelevant work for an item that can never become READY).
+    protected_items: dict[UUID, OrganizationPlanItem] = {}
+    for policy_decision_id, context in resolved_by_id.items():
+        source_outcome = structural_safety.find_structural_protection(
+            context.discovered.path,
+            sandbox_root.path,
+            inspect_candidate_reference=True,
+        )
+        if source_outcome is not None:
+            protected_items[policy_decision_id] = _structural_protection_item(
+                context, source_outcome, destination_path=None
+            )
+
     # Phase 4.
     items = [
-        _finish_item(store, sandbox_root, resolved_by_id[policy_decision_id])
+        protected_items[policy_decision_id]
+        if policy_decision_id in protected_items
+        else _finish_item(store, sandbox_root, resolved_by_id[policy_decision_id])
         for policy_decision_id in frozen
         if policy_decision_id in resolved_by_id
     ]
@@ -275,6 +309,51 @@ def _resolve_lineage(
     return _ResolvedContext(policy_decision_id, policy_decision, proposal, discovered)
 
 
+def _structural_detail(
+    outcome: "StructuralProtection | StructuralInspectionFailure",
+) -> str:
+    """FA-016: renders a find_structural_protection outcome into the
+    free-text `reason` field -- English/technical, audit-only, never shown
+    verbatim in Spanish. Duplicated (not imported) from service.py's
+    identical helper -- both are small, private, module-local presentation
+    helpers, not a shared safety primitive."""
+    if isinstance(outcome, StructuralInspectionFailure):
+        return outcome.detail
+    if outcome.kind is structural_safety.StructuralProtectionKind.HARD_EXCLUSION:
+        return f"path is beneath a hard-excluded directory: {outcome.excluded_name}"
+    return f"path is inside a protected project tree rooted at {outcome.root_path}"
+
+
+def _structural_protection_item(
+    context: "_ResolvedContext",
+    outcome: "StructuralProtection | StructuralInspectionFailure",
+    *,
+    destination_path: Path | None,
+) -> OrganizationPlanItem:
+    """FA-016: builds a PlanStatus.PROTECTED item directly, independent of
+    _finish_item's make_item closure -- used by both Phase 3.5 (source,
+    destination_path always None since it's never reached) and Phase 4's
+    destination check inside _finish_item itself."""
+    policy_decision = context.policy_decision
+    proposal = context.proposal
+    discovered = context.discovered
+    return OrganizationPlanItem(
+        file_id=policy_decision.file_id,
+        proposal_id=proposal.id,
+        policy_decision_id=policy_decision.id,
+        source_path=discovered.path,
+        filename=discovered.filename,
+        category=proposal.category,
+        destination_category=proposal.proposed_destination_category,
+        destination_path=destination_path,
+        policy_outcome=policy_decision.decision,
+        human_review_outcome=None,
+        status=PlanStatus.PROTECTED,
+        reason_code=PlanReasonCode.STRUCTURALLY_PROTECTED,
+        reason=_structural_detail(outcome),
+    )
+
+
 def _finish_item(
     store: FileAgentStore, sandbox_root: SandboxRoot, context: "_ResolvedContext"
 ) -> OrganizationPlanItem:
@@ -332,6 +411,22 @@ def _finish_item(
     destination_path = resolve_destination(
         sandbox_root, proposal.proposed_destination_category, discovered.filename
     )
+
+    # FA-016 destination-side live structural check -- symmetric with
+    # Phase 3.5's source-side check, checked BEFORE REVIEW-outcome
+    # branching: a structurally protected destination is a more
+    # fundamental blocker than "needs human review" -- an item whose
+    # destination is protected must never show REVIEW_REQUIRED, which
+    # would wrongly imply human approval could make it safe.
+    # inspect_candidate_reference=False: destination_path normally does not
+    # exist yet; only its ancestor chain is inspected.
+    destination_outcome = structural_safety.find_structural_protection(
+        destination_path, sandbox_root.path, inspect_candidate_reference=False
+    )
+    if destination_outcome is not None:
+        return _structural_protection_item(
+            context, destination_outcome, destination_path=destination_path
+        )
 
     human_review_outcome: HumanReviewOutcome | None = None
     if policy_decision.decision is PolicyOutcome.REVIEW:
@@ -411,5 +506,6 @@ def _summarize(
         blocked=counts[PlanStatus.BLOCKED],
         skipped=counts[PlanStatus.SKIPPED],
         no_action=counts[PlanStatus.NO_ACTION],
+        protected=counts[PlanStatus.PROTECTED],
         issues=len(issues),
     )
