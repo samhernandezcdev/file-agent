@@ -2,10 +2,13 @@
  * FA-017 golden-path E2E: launches the real compiled desktop app and
  * drives it exactly the way a person would --
  *
- *   add an isolated demo ManagedRoot -> analyze -> preview ->
- *   approve one review item -> select eligible items -> apply ->
- *   see the result -> open history -> undo one transaction ->
- *   verify the resulting UI state.
+ *   add an isolated demo ManagedRoot -> analyze -> preview shows a missing
+ *   destination folder -> prepare that folder -> reanalyze -> the
+ *   previously-conflicted item becomes selectable -> approve one review
+ *   item -> select eligible items -> apply -> see the result -> open
+ *   history -> undo one transaction -> verify the resulting UI state,
+ *   including that no folder-creation undo affordance exists anywhere
+ *   (FA-017.2).
  *
  * Fixtures are created fresh in a throwaway temp directory for this run
  * only (mirrors scripts/demo_preview.py's own fixture set) -- the
@@ -19,7 +22,7 @@
  * documented, supported approach for exactly this case.
  */
 import { mkdtempSync } from "node:fs";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,7 +31,10 @@ function seedFixtureFolder(): string {
   writeFileSync(join(root, "invoice.pdf"), "demo pdf content -- invoice");
   writeFileSync(join(root, "photo.jpg"), "demo jpg bytes -- not a real image");
   writeFileSync(join(root, "setup.exe"), "demo exe bytes -- never executed");
-  mkdirSync(join(root, "Documents"), { recursive: true });
+  // Deliberately does NOT pre-create Documents/ -- FA-017.2's own golden
+  // path needs a genuine destination_parent_missing conflict for
+  // invoice.pdf so the "prepare the missing folder" flow has something
+  // real to exercise.
   return root;
 }
 
@@ -84,6 +90,55 @@ describe("FA-017 golden path", () => {
     expect(bodyText).toContain("setup.exe");
   });
 
+  it("shows the missing-destination attention and prepares the folder, then requires reanalysis", async () => {
+    // The fixture has two missing categories (Documents for invoice.pdf,
+    // Images for photo.jpg) -- use the aggregate "Preparar N carpetas"
+    // button so BOTH clear, rather than the per-panel single-category
+    // button (which would leave one attention legitimately still showing
+    // "Falta preparar esta carpeta" and make the clears-after-reanalysis
+    // assertion below meaningless).
+    const prepareAllButton = await browser.$("button=Preparar 2 carpetas");
+    await prepareAllButton.waitForDisplayed({ timeout: 15000 });
+
+    const bodyTextBefore = await browser.execute(() => document.body.innerText);
+    expect(bodyTextBefore).toContain("Falta preparar esta carpeta");
+
+    await prepareAllButton.click();
+
+    // A real per-category result appears, naming the real physical folder
+    // -- never claims success without the backend's own proof. A bare
+    // "*=text" selector resolves to WebdriverIO's partial-LINK-text
+    // strategy (anchor elements only); the result banner's title renders
+    // as a <strong>, so the selector must be tag-scoped to match it.
+    const documentsResult = await browser.$("strong*=Documents — Preparada");
+    await documentsResult.waitForDisplayed({ timeout: 20000 });
+    const imagesResult = await browser.$("strong*=Images — Preparada");
+    await imagesResult.waitForDisplayed({ timeout: 20000 });
+
+    // The item is NOT locally promoted to READY -- an explicit
+    // "Analizar de nuevo" click is still required.
+    const reanalyzeButton = await browser.$("button=Analizar de nuevo");
+    await reanalyzeButton.waitForDisplayed({ timeout: 15000 });
+    await reanalyzeButton.click();
+
+    // A fresh plan.create/analysis.run round trip -- the plan heading
+    // re-renders and the missing-destination attention is gone because
+    // the real filesystem now has the folder.
+    const planHeading = await browser.$("#plan-heading");
+    await planHeading.waitForDisplayed({ timeout: 20000 });
+    await browser.waitUntil(
+      async () => {
+        const text = await browser.execute(() => document.body.innerText);
+        return !text.includes("Falta preparar esta carpeta");
+      },
+      { timeout: 15000, timeoutMsg: "missing-destination attention never cleared after reanalysis" },
+    );
+
+    // The previously-conflicted item is now selectable.
+    const selectAll = await browser.$('[aria-label="Seleccionar todos los listos"]');
+    await selectAll.waitForDisplayed({ timeout: 15000 });
+  });
+
   it("approves the review-required item", async () => {
     const approveButton = await browser.$("button=Aprobar");
     await approveButton.waitForDisplayed({ timeout: 15000 });
@@ -133,5 +188,19 @@ describe("FA-017 golden path", () => {
     // AlertDialog closes on confirm) -- unchanged assertion from before
     // the Radix AlertDialog migration.
     await confirmButton.waitForExist({ reverse: true, timeout: 15000 });
+  });
+
+  it("never exposes a folder-creation undo affordance anywhere in this flow", async () => {
+    // FA-017.2: creating a directory is deliberately NOT reversible via
+    // any UI affordance (files or other apps may have since populated
+    // it) -- checked here after every screen above (Carpetas/Revisar/
+    // Resultado/Historial) has been visited at least once in this
+    // session. Precise element-name checks, not a whole-page substring
+    // match, to avoid a false positive from unrelated adjacent text
+    // (e.g. the sidebar's own "Carpetas" nav label).
+    const noSuchButtons = await browser.$$("button=Deshacer creación de carpeta");
+    expect(noSuchButtons).toHaveLength(0);
+    const noSuchButtonsEn = await browser.$$("button*=undo folder");
+    expect(noSuchButtonsEn).toHaveLength(0);
   });
 });

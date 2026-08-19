@@ -19,6 +19,8 @@ import type {
   ApplyResultView,
   BatchApplyResultView,
   BatchHistoryEntryView,
+  DestinationCategory,
+  DestinationSetupResultView,
   HistoryLookupFailureView,
   ManagedRootListView,
   ManagedRootUnavailableResultView,
@@ -89,6 +91,17 @@ export const desktop = {
       call<UndoResultView>("recovery.undo_transaction", { transactionId }),
     restoreCapture: (captureId: string) =>
       call<RestoreResultView>("recovery.restore_capture", { captureId }),
+  },
+  destinationSetup: {
+    /** Never sends a path -- only the closed DestinationCategory enum and
+     * an already-authorized managedRootId. Python re-derives everything
+     * else (current need, physical paths, safety) fresh -- see
+     * FileAgentApplicationService.prepare_destinations. */
+    prepare: (managedRootId: string, destinationCategories: DestinationCategory[]) =>
+      call<DestinationSetupResultView | ManagedRootUnavailableResultView>(
+        "destination_setup.prepare",
+        { managedRootId, destinationCategories },
+      ),
   },
   /** The one raw-path source in the whole system: the native folder
    * picker. Returns null on cancel -- callers must never register

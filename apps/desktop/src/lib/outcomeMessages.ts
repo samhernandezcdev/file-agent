@@ -7,13 +7,25 @@ import type { RustOutcome } from "../desktop";
 
 export type NonOkGuidance = { title: string; detail: string };
 
-export type OutcomeContext = "apply" | "review" | "managed_root" | "undo_restore";
+export type OutcomeContext =
+  | "apply"
+  | "review"
+  | "managed_root"
+  | "undo_restore"
+  | "destination_setup";
 
 const UNKNOWN_DETAIL_BY_CONTEXT: Record<OutcomeContext, string> = {
   apply: "Revisa el historial para confirmar qué se organizó antes de intentarlo de nuevo.",
   review: "Actualizaremos la vista para mostrar el estado más reciente antes de tu próxima decisión.",
   managed_root: "Actualizaremos la lista de carpetas para mostrar el estado más reciente.",
   undo_restore: "Revisa la carpeta original para confirmar si el archivo ya está ahí.",
+  // FA-017.2: deliberately never points to Historial -- there is no
+  // destination-setup activity surface there (§12 of the design). A fresh
+  // "Analizar de nuevo" fully resolves the uncertainty product-wise (the
+  // next analysis either shows the folder or doesn't), even though it
+  // can't prove who created it.
+  destination_setup:
+    "Analiza la carpeta de nuevo para comprobar su estado antes de intentarlo otra vez.",
 };
 
 /** Never show success, never show a safe failure, never auto-retry: this

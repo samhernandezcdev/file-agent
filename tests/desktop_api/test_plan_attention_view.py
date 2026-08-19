@@ -77,12 +77,14 @@ def test_two_distinct_missing_parents_produce_two_attention_entries() -> None:
             status=PlanStatus.CONFLICT,
             reason_code=PlanReasonCode.DESTINATION_PARENT_MISSING,
             destination_path=Path("C:/sandbox/Documents/a.pdf"),
+            destination_category=DestinationCategory.DOCUMENTS,
         ),
         _plan_item(
             filename="b.pdf",
             status=PlanStatus.CONFLICT,
             reason_code=PlanReasonCode.DESTINATION_PARENT_MISSING,
             destination_path=Path("C:/sandbox/Documents/b.pdf"),
+            destination_category=DestinationCategory.DOCUMENTS,
         ),
         _plan_item(
             filename="c.jpg",
@@ -90,6 +92,7 @@ def test_two_distinct_missing_parents_produce_two_attention_entries() -> None:
             reason_code=PlanReasonCode.DESTINATION_PARENT_MISSING,
             destination_path=Path("C:/sandbox/Images/c.jpg"),
             category=FileCategory.IMAGE,
+            destination_category=DestinationCategory.IMAGES,
         ),
     )
     attentions = v._missing_destination_folder_attentions(items)
@@ -134,6 +137,7 @@ def test_attention_message_never_leaks_reason_code_and_uses_composed_copy() -> N
             status=PlanStatus.CONFLICT,
             reason_code=PlanReasonCode.DESTINATION_PARENT_MISSING,
             destination_path=Path("C:/sandbox/Documents/invoice.pdf"),
+            destination_category=DestinationCategory.DOCUMENTS,
         ),
     )
     (attention,) = v._missing_destination_folder_attentions(items)
@@ -153,6 +157,7 @@ def test_plan_view_computes_attentions_field() -> None:
             status=PlanStatus.CONFLICT,
             reason_code=PlanReasonCode.DESTINATION_PARENT_MISSING,
             destination_path=Path("C:/sandbox/Documents/invoice.pdf"),
+            destination_category=DestinationCategory.DOCUMENTS,
         ),
     )
     plan = _plan(items)

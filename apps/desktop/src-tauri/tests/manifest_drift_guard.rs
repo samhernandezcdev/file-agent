@@ -33,9 +33,9 @@ fn load_manifest() -> Manifest {
 }
 
 #[test]
-fn manifest_has_exactly_fourteen_entries() {
+fn manifest_has_exactly_fifteen_entries() {
     let manifest = load_manifest();
-    assert_eq!(manifest.commands.len(), 14);
+    assert_eq!(manifest.commands.len(), 15);
 }
 
 #[test]

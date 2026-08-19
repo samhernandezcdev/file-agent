@@ -53,6 +53,8 @@ VIEW_MODELS: tuple[type[BaseModel], ...] = (
     v.HistoryLookupFailureView,
     v.UndoResultView,
     v.RestoreResultView,
+    v.DestinationSetupItemResultView,
+    v.DestinationSetupResultView,
 )
 
 PARAMS_MODELS: tuple[type[BaseModel], ...] = (
@@ -69,6 +71,7 @@ PARAMS_MODELS: tuple[type[BaseModel], ...] = (
     p.HistoryListRecentParams,
     p.RecoveryUndoTransactionParams,
     p.RecoveryRestoreCaptureParams,
+    p.DestinationSetupPrepareParams,
 )
 
 ALL_MODELS: tuple[type[BaseModel], ...] = VIEW_MODELS + PARAMS_MODELS

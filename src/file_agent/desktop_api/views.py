@@ -22,7 +22,6 @@ decision already is.
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
@@ -30,6 +29,10 @@ from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
 from file_agent.application import queries
+from file_agent.application.destination_setup import (
+    DestinationPreparationOutcome,
+    DestinationSetupResult,
+)
 from file_agent.application.dto import (
     AnalysisFailure,
     AnalyzedItem,
@@ -57,7 +60,9 @@ from file_agent.application.organization_plan import (
     OrganizationPlanItem,
     PlanReasonCode,
     PlanStatus,
+    missing_destination_categories,
 )
+from file_agent.destination import PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY
 from file_agent.domain import DestinationCategory, FileCategory
 from file_agent.presentation import es
 from file_agent.presentation.messages import UserMessage as _UserMessage
@@ -333,6 +338,12 @@ class PlanAttentionView(ViewModel):
     "Documents") -- shown verbatim, like any other real filesystem name
     already surfaced elsewhere. Not translated: it is data, not
     vocabulary."""
+    destination_category: DestinationCategory
+    """FA-017.2: the real, machine-stable wire identity a
+    destination_setup.prepare request echoes back -- a closed 7-member
+    enum, never a path, never derived from destination_label (which is
+    display text only, not designed as a protocol identifier even though
+    it happens to equal the physical folder name today)."""
     message: UserMessageView
     affected_filenames: tuple[str, ...]
 
@@ -341,31 +352,44 @@ def _missing_destination_folder_attentions(
     items: tuple[OrganizationPlanItem, ...],
 ) -> tuple[PlanAttentionView, ...]:
     """Groups CONFLICT items whose reason is DESTINATION_PARENT_MISSING by
-    their actual destination_path.parent -- not merely by reason code, so
-    two distinct missing folders (e.g. both Documents and Images absent)
-    produce two separate attention entries."""
-    groups: dict[str, list[OrganizationPlanItem]] = {}
+    destination_category. Which categories get an entry at all comes from
+    the single shared missing_destination_categories() definition
+    (FA-017.2 -- also used by destination-setup's current-need
+    authorization, application/service.py::prepare_destinations) -- this
+    loop only assigns each qualifying item to its already-known bucket, so
+    the two call sites can never independently drift on what "missing"
+    means."""
+    required = missing_destination_categories(items)
+    groups: dict[DestinationCategory, list[OrganizationPlanItem]] = {
+        category: [] for category in required
+    }
     for item in items:
         if (
-            item.status is not PlanStatus.CONFLICT
+            item.destination_category not in required
+            or item.status is not PlanStatus.CONFLICT
             or item.reason_code is not PlanReasonCode.DESTINATION_PARENT_MISSING
             or item.destination_path is None
         ):
             continue
-        groups.setdefault(str(item.destination_path.parent), []).append(item)
+        groups[item.destination_category].append(item)
 
     attentions: list[PlanAttentionView] = []
-    for parent_path, group_items in groups.items():
+    for category, group_items in groups.items():
+        if not group_items:
+            continue
         first = group_items[0]
+        assert first.destination_path is not None  # guaranteed by the filter above
+        destination_label = first.destination_path.parent.name
         attentions.append(
             PlanAttentionView(
                 variant="missing_destination_folder",
                 category_label=_file_category_label(first.category),
-                destination_label=Path(parent_path).name,
+                destination_label=destination_label,
+                destination_category=category,
                 message=_message_view(
                     es.missing_destination_folder_message(
                         _file_category_label(first.category),
-                        Path(parent_path).name,
+                        destination_label,
                         len(group_items),
                     )
                 ),
@@ -424,6 +448,53 @@ def plan_view(plan: OrganizationPlan) -> PlanView:
             issues=summary.issues,
         ),
         structural_protection_note=es.structural_protection_note(summary.protected),
+    )
+
+
+# --- Destination setup (FA-017.2) --------------------------------------------
+
+
+class DestinationSetupItemResultView(ViewModel):
+    destination_category: DestinationCategory
+    destination_label: str
+    """The literal physical folder name (e.g. "Documents") -- rendered
+    verbatim, same convention as PlanAttentionView.destination_label."""
+    status: Literal["prepared", "already_available", "not_prepared"]
+    message: UserMessageView
+
+
+def _destination_setup_item_result_view(
+    outcome: DestinationPreparationOutcome,
+) -> DestinationSetupItemResultView:
+    return DestinationSetupItemResultView(
+        destination_category=outcome.destination_category,
+        destination_label=PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY[
+            outcome.destination_category
+        ],
+        status=outcome.status.value,
+        message=_message_view(es.destination_preparation_item_message(outcome)),
+    )
+
+
+class DestinationSetupResultView(ViewModel):
+    outcome: Literal["ok"]
+    setup_id: UUID
+    managed_root_id: UUID
+    items: tuple[DestinationSetupItemResultView, ...]
+    summary_message: UserMessageView
+
+
+def destination_setup_result_view(
+    result: DestinationSetupResult,
+) -> DestinationSetupResultView:
+    return DestinationSetupResultView(
+        outcome="ok",
+        setup_id=result.setup_id,
+        managed_root_id=result.managed_root_id,
+        items=tuple(_destination_setup_item_result_view(o) for o in result.outcomes),
+        summary_message=_message_view(
+            es.destination_setup_summary_message(result.outcomes)
+        ),
     )
 
 

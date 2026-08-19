@@ -12,6 +12,7 @@ built, and file_agent.destination for the shared destination-resolution/
 inspection logic both this module and TransactionEngine consume.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -90,6 +91,28 @@ class OrganizationPlanItem:
     status: PlanStatus
     reason_code: PlanReasonCode | None
     reason: str | None
+
+
+def missing_destination_categories(
+    items: Sequence[OrganizationPlanItem],
+) -> frozenset[DestinationCategory]:
+    """FA-017.2: the single, shared definition of "this category currently
+    has a destination_parent_missing conflict". Both PlanAttentionView's
+    missing-destination aggregation (desktop_api/views.py::
+    _missing_destination_folder_attentions, presentation layer) and
+    destination-setup's current-need authorization
+    (application/service.py::prepare_destinations) call this ONE function,
+    so the two can never independently drift into disagreeing about what
+    "missing" means. Deliberately requires BOTH status and reason_code --
+    reason_code alone would not distinguish a genuine current conflict from
+    any future PlanReasonCode reuse across statuses."""
+    return frozenset(
+        item.destination_category
+        for item in items
+        if item.status is PlanStatus.CONFLICT
+        and item.reason_code is PlanReasonCode.DESTINATION_PARENT_MISSING
+        and item.destination_category is not None
+    )
 
 
 @dataclass(frozen=True, slots=True)

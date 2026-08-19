@@ -40,6 +40,23 @@ class EventType(str, Enum):
     scan (never per file). entity_type=SCAN, entity_id=scan_run.id. Hard
     exclusions never produce this event -- they remain silent, matching the
     pre-existing internal-artifact exclusion's own silent treatment."""
+    DESTINATION_SETUP_STARTED = "destination_setup_started"
+    """FA-017.2: written before any directory-creation attempt for a
+    prepare_destinations call. entity_type=DESTINATION_SETUP,
+    entity_id=setup_id."""
+    DESTINATION_SETUP_ITEM_RESULT = "destination_setup_item_result"
+    """FA-017.2: one per requested-category outcome (prepared/
+    already_available/not_prepared, including not_currently_required),
+    written immediately after that category's attempt. Same
+    entity_type/entity_id as DESTINATION_SETUP_STARTED -- one event type
+    for every outcome kind, distinguished by payload, mirroring
+    BATCH_ITEM_RECORDED's own shape."""
+    DESTINATION_SETUP_COMPLETED = "destination_setup_completed"
+    """FA-017.2: a convenience batch-level marker written after every
+    requested category has been processed. Best-effort durable audit only
+    -- see application/destination_setup.py's module docstring for why
+    this stream is never treated as an authoritative reconstruction
+    source."""
 
 
 class EntityType(str, Enum):
@@ -54,6 +71,9 @@ class EntityType(str, Enum):
     VAULT_CAPTURE = "vault_capture"
     RECOVERY = "recovery"
     BATCH = "batch"
+    DESTINATION_SETUP = "destination_setup"
+    """FA-017.2: entity_id is the setup_id of one prepare_destinations
+    call."""
 
 
 class DomainEvent(BaseModel):

@@ -23,6 +23,7 @@ from file_agent.destination.inspection import (
 from file_agent.destination.rules import (
     PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY,
     resolve_destination,
+    resolve_destination_directory,
 )
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "DestinationInspection",
     "inspect_destination",
     "resolve_destination",
+    "resolve_destination_directory",
     "resolve_for_containment",
 ]

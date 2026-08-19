@@ -1,7 +1,7 @@
 """FA-017 Round 7 §"commands.json": the manifest is a contract/drift guard,
 never runtime authorization. This proves the Python-side half of that
 contract: the dispatcher's registered handler set, the retry-safety
-catalogue, and commands.json itself all agree on exactly the same 14
+catalogue, and commands.json itself all agree on exactly the same 15
 command names and classifications -- no wildcard/default arm, no silent
 drift between the three."""
 
@@ -33,13 +33,14 @@ _EXPECTED_UNKNOWN_ON_DISCONNECT = frozenset(
         "apply.items",
         "recovery.undo_transaction",
         "recovery.restore_capture",
+        "destination_setup.prepare",
     }
 )
 
 
-def test_exactly_fourteen_commands() -> None:
-    assert len(COMMAND_NAMES) == 14
-    assert len(HANDLERS) == 14
+def test_exactly_fifteen_commands() -> None:
+    assert len(COMMAND_NAMES) == 15
+    assert len(HANDLERS) == 15
 
 
 def test_dispatcher_handler_set_matches_manifest() -> None:

@@ -603,6 +603,111 @@
       "title": "BatchHistoryItemView",
       "type": "object"
     },
+    "DestinationCategory": {
+      "description": "A logical organization destination \u2014 not a filesystem path, absolute\nor relative. Resolving this into an actual location (organization root,\ncategory folder, filename) is explicitly deferred to a future ticket;\nthis enum exists only to constrain proposals to a small, stable, typed\nvocabulary instead of letting arbitrary strings (\"Docs\", \"documents/\",\nad-hoc casing) enter durable proposal records.",
+      "enum": [
+        "documents",
+        "images",
+        "audio",
+        "video",
+        "archives",
+        "code",
+        "executables"
+      ],
+      "title": "DestinationCategory",
+      "type": "string"
+    },
+    "DestinationSetupItemResultView": {
+      "properties": {
+        "destinationCategory": {
+          "$ref": "#/$defs/DestinationCategory"
+        },
+        "destinationLabel": {
+          "title": "Destinationlabel",
+          "type": "string"
+        },
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
+        },
+        "status": {
+          "enum": [
+            "prepared",
+            "already_available",
+            "not_prepared"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "destinationCategory",
+        "destinationLabel",
+        "status",
+        "message"
+      ],
+      "title": "DestinationSetupItemResultView",
+      "type": "object"
+    },
+    "DestinationSetupPrepareParams": {
+      "properties": {
+        "destinationCategories": {
+          "items": {
+            "$ref": "#/$defs/DestinationCategory"
+          },
+          "title": "Destinationcategories",
+          "type": "array"
+        },
+        "managedRootId": {
+          "format": "uuid",
+          "title": "Managedrootid",
+          "type": "string"
+        }
+      },
+      "required": [
+        "managedRootId",
+        "destinationCategories"
+      ],
+      "title": "DestinationSetupPrepareParams",
+      "type": "object"
+    },
+    "DestinationSetupResultView": {
+      "properties": {
+        "items": {
+          "items": {
+            "$ref": "#/$defs/DestinationSetupItemResultView"
+          },
+          "title": "Items",
+          "type": "array"
+        },
+        "managedRootId": {
+          "format": "uuid",
+          "title": "Managedrootid",
+          "type": "string"
+        },
+        "outcome": {
+          "const": "ok",
+          "title": "Outcome",
+          "type": "string"
+        },
+        "setupId": {
+          "format": "uuid",
+          "title": "Setupid",
+          "type": "string"
+        },
+        "summaryMessage": {
+          "$ref": "#/$defs/UserMessageView"
+        }
+      },
+      "required": [
+        "outcome",
+        "setupId",
+        "managedRootId",
+        "items",
+        "summaryMessage"
+      ],
+      "title": "DestinationSetupResultView",
+      "type": "object"
+    },
     "HistoryGetBatchParams": {
       "properties": {
         "batchId": {
@@ -760,6 +865,9 @@
           "title": "Categorylabel",
           "type": "string"
         },
+        "destinationCategory": {
+          "$ref": "#/$defs/DestinationCategory"
+        },
         "destinationLabel": {
           "title": "Destinationlabel",
           "type": "string"
@@ -777,6 +885,7 @@
         "variant",
         "categoryLabel",
         "destinationLabel",
+        "destinationCategory",
         "message",
         "affectedFilenames"
       ],

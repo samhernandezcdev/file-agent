@@ -1,12 +1,13 @@
-//! FA-017 Round 7's closed, exhaustive 14-command catalogue. This is the
-//! ONE place a command name string is ever trusted to mean something --
-//! `parse()` fails closed (returns `None`) for anything else, and
-//! `retry_safety()` has no wildcard/default arm, so adding a 15th command
-//! without updating both functions is a compile error, not a silent gap.
+//! FA-017 Round 7's closed, exhaustive command catalogue, extended by
+//! FA-017.2 to 15 entries. This is the ONE place a command name string is
+//! ever trusted to mean something -- `parse()` fails closed (returns
+//! `None`) for anything else, and `retry_safety()` has no wildcard/default
+//! arm, so adding a 16th command without updating both functions is a
+//! compile error, not a silent gap.
 //!
 //! This enum, its `parse`/`retry_safety`/`name` mappings, and
 //! `src/file_agent/desktop_api/commands.json` are three independent
-//! encodings of the exact same 14-entry contract; see
+//! encodings of the exact same 15-entry contract; see
 //! `tests/manifest_drift_guard.rs` for the test proving all three agree.
 //! The manifest is metadata/a drift guard -- it is never consulted at
 //! runtime and never grants execution authority.
@@ -27,6 +28,7 @@ pub enum DesktopCommand {
     HistoryListRecent,
     RecoveryUndoTransaction,
     RecoveryRestoreCapture,
+    DestinationSetupPrepare,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,7 +37,7 @@ pub enum RetrySafety {
     UnknownOnDisconnect,
 }
 
-pub const ALL_COMMANDS: [DesktopCommand; 14] = [
+pub const ALL_COMMANDS: [DesktopCommand; 15] = [
     DesktopCommand::ManagedRootsAdd,
     DesktopCommand::ManagedRootsRemove,
     DesktopCommand::ManagedRootsList,
@@ -50,6 +52,7 @@ pub const ALL_COMMANDS: [DesktopCommand; 14] = [
     DesktopCommand::HistoryListRecent,
     DesktopCommand::RecoveryUndoTransaction,
     DesktopCommand::RecoveryRestoreCapture,
+    DesktopCommand::DestinationSetupPrepare,
 ];
 
 impl DesktopCommand {
@@ -73,6 +76,7 @@ impl DesktopCommand {
             "history.list_recent" => Some(DesktopCommand::HistoryListRecent),
             "recovery.undo_transaction" => Some(DesktopCommand::RecoveryUndoTransaction),
             "recovery.restore_capture" => Some(DesktopCommand::RecoveryRestoreCapture),
+            "destination_setup.prepare" => Some(DesktopCommand::DestinationSetupPrepare),
             _ => None,
         }
     }
@@ -93,6 +97,7 @@ impl DesktopCommand {
             DesktopCommand::HistoryListRecent => "history.list_recent",
             DesktopCommand::RecoveryUndoTransaction => "recovery.undo_transaction",
             DesktopCommand::RecoveryRestoreCapture => "recovery.restore_capture",
+            DesktopCommand::DestinationSetupPrepare => "destination_setup.prepare",
         }
     }
 
@@ -120,6 +125,12 @@ impl DesktopCommand {
             DesktopCommand::ApplyItems => RetrySafety::UnknownOnDisconnect,
             DesktopCommand::RecoveryUndoTransaction => RetrySafety::UnknownOnDisconnect,
             DesktopCommand::RecoveryRestoreCapture => RetrySafety::UnknownOnDisconnect,
+            // FA-017.2: a filesystem-touching mutation over the same
+            // managed-root mutation surface as ManagedRootsAdd/ApplyItems --
+            // STARTED-then-disconnect leaves genuine uncertainty about
+            // partial completion across a multi-category batch that the
+            // caller cannot silently paper over automatically.
+            DesktopCommand::DestinationSetupPrepare => RetrySafety::UnknownOnDisconnect,
         }
     }
 }
@@ -129,8 +140,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn manual_count_all_commands_is_fourteen() {
-        assert_eq!(ALL_COMMANDS.len(), 14);
+    fn manual_count_all_commands_is_fifteen() {
+        assert_eq!(ALL_COMMANDS.len(), 15);
     }
 
     #[test]
@@ -148,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn retry_safety_split_is_exactly_six_and_eight() {
+    fn retry_safety_split_is_exactly_six_and_nine() {
         let safe_retry_count = ALL_COMMANDS
             .iter()
             .filter(|c| c.retry_safety() == RetrySafety::SafeRetry)
@@ -158,6 +169,6 @@ mod tests {
             .filter(|c| c.retry_safety() == RetrySafety::UnknownOnDisconnect)
             .count();
         assert_eq!(safe_retry_count, 6);
-        assert_eq!(unknown_count, 8);
+        assert_eq!(unknown_count, 9);
     }
 }

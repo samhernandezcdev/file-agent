@@ -128,6 +128,54 @@ def _all_rendered_strings() -> list[str]:
     assert note is not None
     strings.append(note)
 
+    from file_agent.application.destination_setup import (
+        DestinationPreparationOutcome,
+        DestinationPreparationStatus,
+        DestinationSetupReasonCode,
+    )
+    from file_agent.domain import DestinationCategory
+
+    for status, reason_code in (
+        (DestinationPreparationStatus.PREPARED, None),
+        (DestinationPreparationStatus.ALREADY_AVAILABLE, None),
+        *(
+            (DestinationPreparationStatus.NOT_PREPARED, reason)
+            for reason in DestinationSetupReasonCode
+        ),
+    ):
+        outcome = DestinationPreparationOutcome(
+            DestinationCategory.DOCUMENTS, status, reason_code
+        )
+        message = es.destination_preparation_item_message(outcome)
+        strings.append(message.title)
+        strings.append(message.detail)
+
+    def _outcome(
+        status: DestinationPreparationStatus,
+    ) -> DestinationPreparationOutcome:
+        reason = (
+            None
+            if status is not DestinationPreparationStatus.NOT_PREPARED
+            else DestinationSetupReasonCode.FILE_AT_DESTINATION
+        )
+        return DestinationPreparationOutcome(DestinationCategory.IMAGES, status, reason)
+
+    for outcomes in (
+        [_outcome(DestinationPreparationStatus.PREPARED)],
+        [_outcome(DestinationPreparationStatus.ALREADY_AVAILABLE)],
+        [
+            _outcome(DestinationPreparationStatus.PREPARED),
+            _outcome(DestinationPreparationStatus.ALREADY_AVAILABLE),
+        ],
+        [
+            _outcome(DestinationPreparationStatus.PREPARED),
+            _outcome(DestinationPreparationStatus.NOT_PREPARED),
+        ],
+    ):
+        summary = es.destination_setup_summary_message(outcomes)
+        strings.append(summary.title)
+        strings.append(summary.detail)
+
     return strings
 
 

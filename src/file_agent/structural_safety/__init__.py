@@ -357,12 +357,71 @@ def find_structural_protection(
     return None
 
 
+# --- Leaf inspection (FA-017.2 destination-setup TOCTOU) --------------------
+
+
+class LeafState(str, Enum):
+    """Fail-closed classification of exactly what currently sits at a
+    single path -- used by destination_engine's create-directory sequence
+    both as the pre-mkdir check and as the post-FileExistsError
+    re-inspection (see application/service.py::prepare_destinations).
+    Distinct from _ReferenceState above: this classifies the FULL leaf
+    (including plain-file vs plain-directory), not just reparse-point
+    status, and is a public, reusable primitive rather than this module's
+    own private helper."""
+
+    ABSENT = "absent"
+    NORMAL_DIRECTORY = "normal_directory"
+    NORMAL_FILE = "normal_file"
+    REPARSE_POINT = "reparse_point"
+    INSPECTION_FAILED = "inspection_failed"
+
+
+def inspect_leaf(path: Path) -> LeafState:
+    """Fail-closed classification of exactly what currently sits at `path`,
+    never following symlinks. Uses the identical three-way reparse/reference
+    detection technique as _inspect_reference_state above (is_symlink(),
+    then isjunction(), then the stat result's own
+    FILE_ATTRIBUTE_REPARSE_POINT flag) rather than a second, independently
+    written implementation of the same check.
+
+    FileNotFoundError -> ABSENT (conclusive: an entry that isn't there
+    can't hide a marker or a reparse point -- same reasoning
+    _inspect_reference_state already documents). Any other OSError during
+    inspection -> INSPECTION_FAILED, never silently coerced to a
+    normal-entry classification. A stat result that is neither a directory
+    nor a regular file -> INSPECTION_FAILED (fail closed on an exotic
+    object type -- a block/char device, FIFO, or socket -- rather than
+    guessing)."""
+    try:
+        if path.is_symlink():
+            return LeafState.REPARSE_POINT
+        if os.path.isjunction(path):
+            return LeafState.REPARSE_POINT
+        st = os.stat(path, follow_symlinks=False)
+    except FileNotFoundError:
+        return LeafState.ABSENT
+    except OSError:
+        return LeafState.INSPECTION_FAILED
+    if st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+        return LeafState.REPARSE_POINT
+    if stat.S_ISDIR(st.st_mode):
+        return LeafState.NORMAL_DIRECTORY
+    if stat.S_ISREG(st.st_mode):
+        return LeafState.NORMAL_FILE
+    # block/char device, FIFO, socket, or any other mode this design has
+    # no defined meaning for.
+    return LeafState.INSPECTION_FAILED
+
+
 __all__ = [
+    "LeafState",
     "ProjectMarkerType",
     "StructuralInspectionFailure",
     "StructuralProtection",
     "StructuralProtectionKind",
     "classify_directory",
     "find_structural_protection",
+    "inspect_leaf",
     "is_hard_excluded_directory_name",
 ]

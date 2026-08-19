@@ -363,3 +363,324 @@ describe("App -- apply completion inbox lifecycle", () => {
     expect(applyCallsAfterCompletion).toBe(1);
   });
 });
+
+const PLAN_RESULT_WITH_ATTENTION = {
+  outcome: "ok",
+  result: {
+    ...PLAN_RESULT.result,
+    attentions: [
+      {
+        variant: "missing_destination_folder",
+        categoryLabel: "Documento",
+        destinationLabel: "Documents",
+        destinationCategory: "documents",
+        message: {
+          title: "Falta preparar esta carpeta",
+          detail: "1 archivo está listo para clasificarse como Documento, pero falta:\n\nDocuments",
+          severity: "attention",
+          suggestedAction: "reanalyze",
+        },
+        affectedFilenames: ["invoice.pdf"],
+      },
+    ],
+  },
+};
+
+describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    queryClient.clear();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("a prepare completion arriving after the user has navigated away is handled exactly once, without crashing or forcing navigation", async () => {
+    let resolvePrepare!: (value: unknown) => void;
+    const preparePromise = new Promise((resolve) => {
+      resolvePrepare = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return ROOTS_RESULT;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTION;
+      if (command === "destination_setup.prepare") return preparePromise;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
+
+    // Navigate away before the prepare call resolves -- no notice/retained
+    // state exists for this feature, so this is simply "the user left."
+    await userEvent.click(screen.getByRole("button", { name: "Historial" }));
+    expect(await screen.findByRole("heading", { name: "Historial" })).toBeInTheDocument();
+
+    // The hook-level onSuccess still fires (same guarantee proven for
+    // apply.items in FA-017.1) -- this must not throw/crash the app and
+    // must not force any navigation back to Carpetas/Revisar.
+    resolvePrepare({
+      outcome: "ok",
+      result: {
+        outcome: "ok",
+        setupId: "setup-1",
+        managedRootId: "root-1",
+        items: [
+          {
+            destinationCategory: "documents",
+            destinationLabel: "Documents",
+            status: "prepared",
+            message: {
+              title: "Preparada",
+              detail: "FileAgent creó esta carpeta.",
+              severity: "info",
+              suggestedAction: "none",
+            },
+          },
+        ],
+        summaryMessage: {
+          title: "1 carpetas preparadas.",
+          detail: "FileAgent debe volver a comprobar la carpeta antes de organizar.",
+          severity: "info",
+          suggestedAction: "reanalyze",
+        },
+      },
+    });
+
+    // Still on Historial -- not force-navigated anywhere.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(screen.getByRole("heading", { name: "Historial" })).toBeInTheDocument();
+
+    // Exactly one prepare call was made -- no silent retry.
+    const prepareCalls = vi
+      .mocked(invoke)
+      .mock.calls.filter(
+        ([, a]) => (a as { command?: string })?.command === "destination_setup.prepare",
+      );
+    expect(prepareCalls).toHaveLength(1);
+  });
+
+  const ANALYSIS_RESULT_ROOT1_FRESH = {
+    outcome: "ok",
+    result: {
+      outcome: "ok",
+      scanId: "scan-1b",
+      filesDiscovered: 1,
+      protectedTreesMessage: null,
+      failures: [],
+      items: [{ fileId: "f1", filename: "invoice.pdf", policyDecisionId: "pd-ready-fresh" }],
+    },
+  };
+
+  const PLAN_RESULT_RESOLVED = {
+    outcome: "ok",
+    result: {
+      ...PLAN_RESULT.result,
+      attentions: [],
+      items: [
+        {
+          actionId: "pd-ready-fresh",
+          filename: "invoice.pdf",
+          sourceDisplayPath: "C:/Descargas/invoice.pdf",
+          destinationDisplayPath: "C:/Descargas/Documents/invoice.pdf",
+          categoryLabel: "Documento",
+          status: "ready",
+          title: "Listo para organizar",
+          detail: "Este archivo está listo para organizarse.",
+          severity: "info",
+          selectable: true,
+        },
+      ],
+    },
+  };
+
+  function fullPrepareResult() {
+    return {
+      outcome: "ok",
+      result: {
+        outcome: "ok",
+        setupId: "setup-1",
+        managedRootId: "root-1",
+        items: [
+          {
+            destinationCategory: "documents",
+            destinationLabel: "Documents",
+            status: "prepared",
+            message: {
+              title: "Preparada",
+              detail: "FileAgent creó esta carpeta.",
+              severity: "info",
+              suggestedAction: "none",
+            },
+          },
+        ],
+        summaryMessage: {
+          title: "1 carpetas preparadas.",
+          detail: "FileAgent debe volver a comprobar la carpeta antes de organizar.",
+          severity: "info",
+          suggestedAction: "reanalyze",
+        },
+      },
+    };
+  }
+
+  it("Major-1 remediation: a completed setup marks Plan A non-authoritative; it does not resurrect as actionable after navigating away and back; only explicit reanalysis produces fresh Plan B", async () => {
+    let analysisCallCount = 0;
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      const params = (args as { params?: Record<string, unknown> })?.params;
+      if (command === "managed_roots.list") return ROOTS_RESULT;
+      if (command === "analysis.run") {
+        analysisCallCount += 1;
+        return analysisCallCount === 1 ? ANALYSIS_RESULT : ANALYSIS_RESULT_ROOT1_FRESH;
+      }
+      if (command === "plan.create") {
+        const ids = (params?.policyDecisionIds as string[] | undefined) ?? [];
+        return ids.includes("pd-ready-fresh") ? PLAN_RESULT_RESOLVED : PLAN_RESULT_WITH_ATTENTION;
+      }
+      if (command === "destination_setup.prepare") return fullPrepareResult();
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+    await screen.findByRole("checkbox", { name: "Seleccionar invoice.pdf" });
+
+    // Destination setup succeeds -- Plan A is immediately marked
+    // non-authoritative in this same mount, before any navigation.
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
+    await screen.findByText("Documents — Preparada");
+    expect(screen.getByText("Este plan ya no está actualizado.")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
+
+    // Navigate away, then back to the SAME managed root.
+    await userEvent.click(screen.getByRole("button", { name: "Carpetas" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+
+    // Plan A must not resurrect as actionable on remount, and remounting
+    // must not have triggered a second, automatic analysis.run call.
+    await screen.findByText("Este plan ya no está actualizado.");
+    expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Organizar 1 archivo/ })).not.toBeInTheDocument();
+    expect(analysisCallCount).toBe(1);
+
+    // Only explicit "Analizar de nuevo" obtains the next actionable plan.
+    await userEvent.click(screen.getByRole("button", { name: "Analizar de nuevo" }));
+
+    await waitFor(() => expect(analysisCallCount).toBe(2));
+    expect(await screen.findByRole("checkbox", { name: "Seleccionar invoice.pdf" })).toBeInTheDocument();
+    expect(screen.queryByText("Este plan ya no está actualizado.")).not.toBeInTheDocument();
+  });
+
+  const PLAN_RESULT_WITH_TWO_ATTENTIONS = {
+    outcome: "ok",
+    result: {
+      ...PLAN_RESULT.result,
+      attentions: [
+        {
+          variant: "missing_destination_folder",
+          categoryLabel: "Documento",
+          destinationLabel: "Documents",
+          destinationCategory: "documents",
+          message: {
+            title: "Falta preparar esta carpeta",
+            detail: "1 archivo está listo para clasificarse como Documento, pero falta:\n\nDocuments",
+            severity: "attention",
+            suggestedAction: "reanalyze",
+          },
+          affectedFilenames: ["invoice.pdf"],
+        },
+        {
+          variant: "missing_destination_folder",
+          categoryLabel: "Imagen",
+          destinationLabel: "Images",
+          destinationCategory: "images",
+          message: {
+            title: "Falta preparar esta carpeta",
+            detail: "1 archivo está listo para clasificarse como Imagen, pero falta:\n\nImages",
+            severity: "attention",
+            suggestedAction: "reanalyze",
+          },
+          affectedFilenames: ["photo.jpg"],
+        },
+      ],
+    },
+  };
+
+  it("Major-1 remediation: a PARTIAL setup result (one prepared, one not_prepared) also marks the plan non-authoritative and survives navigating away and back", async () => {
+    let analysisCallCount = 0;
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return ROOTS_RESULT;
+      if (command === "analysis.run") {
+        analysisCallCount += 1;
+        return ANALYSIS_RESULT;
+      }
+      if (command === "plan.create") return PLAN_RESULT_WITH_TWO_ATTENTIONS;
+      if (command === "destination_setup.prepare") {
+        return {
+          outcome: "ok",
+          result: {
+            outcome: "ok",
+            setupId: "setup-2",
+            managedRootId: "root-1",
+            items: [
+              {
+                destinationCategory: "documents",
+                destinationLabel: "Documents",
+                status: "prepared",
+                message: {
+                  title: "Preparada",
+                  detail: "FileAgent creó esta carpeta.",
+                  severity: "info",
+                  suggestedAction: "none",
+                },
+              },
+              {
+                destinationCategory: "images",
+                destinationLabel: "Images",
+                status: "not_prepared",
+                message: {
+                  title: "No pudimos prepararla",
+                  detail: "No pudimos confirmar que esta ubicación sea segura.",
+                  severity: "attention",
+                  suggestedAction: "none",
+                },
+              },
+            ],
+            summaryMessage: {
+              title: "1 de 2 carpetas están listas.",
+              detail: "FileAgent debe volver a comprobar la carpeta antes de organizar.",
+              severity: "attention",
+              suggestedAction: "reanalyze",
+            },
+          },
+        };
+      }
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar 2 carpetas" }));
+    await screen.findByText("Documents — Preparada");
+
+    expect(screen.getByText("Este plan ya no está actualizado.")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Carpetas" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+
+    // Still gated after remount, and the partial (not fully successful)
+    // result never triggered a second, automatic analysis.run either.
+    await screen.findByText("Este plan ya no está actualizado.");
+    expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
+    expect(analysisCallCount).toBe(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Analizar de nuevo" }));
+    await waitFor(() => expect(analysisCallCount).toBe(2));
+  });
+});

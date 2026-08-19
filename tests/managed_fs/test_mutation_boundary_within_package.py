@@ -3,14 +3,23 @@ mutation primitive -- and within operations.py itself, open(..., "wb") is
 banned as a managed-root file-creation primitive (exclusive "xb" creation
 is the only approved mode). Mirrors transaction_engine's former package-local
 guardrail (now removed -- transaction_engine has zero mutation call sites of
-its own after the FA-011 refactor, same as recovery_engine)."""
+its own after the FA-011 refactor, same as recovery_engine).
+
+FA-017.2: `.mkdir(` is now also an approved call, but ONLY inside
+operations.py (create_directory_no_replace) -- same narrow carve-out
+`.rename(` already has, counted separately below, never added to
+FORBIDDEN_METHOD_NAMES."""
 
 import ast
 from pathlib import Path
 
 import pytest
 
-from file_agent.managed_fs import move_no_replace, write_new_file
+from file_agent.managed_fs import (
+    create_directory_no_replace,
+    move_no_replace,
+    write_new_file,
+)
 
 FORBIDDEN_DOTTED_CALLS = {
     ("os", "remove"),
@@ -37,13 +46,12 @@ FORBIDDEN_DOTTED_CALLS = {
 FORBIDDEN_METHOD_NAMES = {
     "unlink",
     "replace",
-    "mkdir",
     "touch",
     "write_text",
     "write_bytes",
 }
-""""rename" deliberately excluded -- it's the approved primitive inside
-operations.py itself, counted separately below."""
+""""rename" and "mkdir" deliberately excluded -- they're the approved
+primitives inside operations.py itself, each counted separately below."""
 
 MANAGED_FS_DIR = (
     Path(__file__).resolve().parents[2] / "src" / "file_agent" / "managed_fs"
@@ -65,6 +73,7 @@ class _MutationVisitor(ast.NodeVisitor):
     def __init__(self) -> None:
         self.violations: list[str] = []
         self.rename_calls = 0
+        self.mkdir_calls = 0
         self.open_modes: list[str] = []
 
     def visit_Call(self, node: ast.Call) -> None:
@@ -77,6 +86,8 @@ class _MutationVisitor(ast.NodeVisitor):
                     self.violations.append(f"forbidden call: {dotted}(")
                 if func.attr == "rename":
                     self.rename_calls += 1
+                elif func.attr == "mkdir":
+                    self.mkdir_calls += 1
                 elif func.attr in FORBIDDEN_METHOD_NAMES:
                     self.violations.append(f"forbidden method call: .{func.attr}(")
         elif isinstance(func, ast.Name) and func.id == "open":
@@ -103,12 +114,14 @@ def test_only_operations_py_calls_a_mutation_primitive() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         visitor = _MutationVisitor()
         visitor.visit(tree)
-        if visitor.violations or visitor.rename_calls:
+        if visitor.violations or visitor.rename_calls or visitor.mkdir_calls:
             mutating_files.add(path.name)
         if path.name != APPROVED_MUTATION_FILE:
             offenders.extend(f"{path.name}: {v}" for v in visitor.violations)
             if visitor.rename_calls:
                 offenders.append(f"{path.name}: unexpected .rename( call")
+            if visitor.mkdir_calls:
+                offenders.append(f"{path.name}: unexpected .mkdir( call")
 
     assert not offenders, (
         f"forbidden filesystem-mutation patterns found outside {APPROVED_MUTATION_FILE}: {offenders}"
@@ -179,3 +192,50 @@ def test_move_no_replace_relocates_to_a_fresh_destination(tmp_path: Path) -> Non
 
     assert not source.exists()
     assert destination.read_bytes() == b"relocate me"
+
+
+def test_create_directory_no_replace_creates_fresh_directory(tmp_path: Path) -> None:
+    target = tmp_path / "Documents"
+
+    create_directory_no_replace(target)
+
+    assert target.is_dir()
+
+
+def test_create_directory_no_replace_raises_file_exists_error_for_existing_directory(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "Documents"
+    target.mkdir()
+
+    with pytest.raises(FileExistsError):
+        create_directory_no_replace(target)
+
+
+def test_create_directory_no_replace_raises_file_exists_error_for_existing_file(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "Documents"
+    target.write_bytes(b"a regular file, not a directory")
+
+    with pytest.raises(FileExistsError):
+        create_directory_no_replace(target)
+    assert target.is_file()
+
+
+def test_create_directory_no_replace_raises_file_not_found_when_parent_missing(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "missing_parent" / "Documents"
+
+    with pytest.raises(FileNotFoundError):
+        create_directory_no_replace(target)
+
+
+def test_create_directory_no_replace_never_creates_parents(tmp_path: Path) -> None:
+    target = tmp_path / "a" / "b" / "Documents"
+
+    with pytest.raises(FileNotFoundError):
+        create_directory_no_replace(target)
+
+    assert not (tmp_path / "a").exists()

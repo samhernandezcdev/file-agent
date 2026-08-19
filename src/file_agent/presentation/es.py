@@ -13,6 +13,11 @@ string is ever added to a domain enum or engine.
 
 from collections.abc import Sequence
 
+from file_agent.application.destination_setup import (
+    DestinationPreparationOutcome,
+    DestinationPreparationStatus,
+    DestinationSetupReasonCode,
+)
 from file_agent.application.dto import (
     BatchApplyItemResult,
     BatchApplyItemStatus,
@@ -476,6 +481,101 @@ def missing_destination_folder_message(
         title="Falta preparar esta carpeta",
         detail=detail,
         severity=Severity.ATTENTION,
+        suggested_action=SuggestedAction.REANALYZE,
+    )
+
+
+_DESTINATION_SETUP_REASON_DETAIL: dict[DestinationSetupReasonCode, str] = {
+    DestinationSetupReasonCode.NOT_CURRENTLY_REQUIRED: (
+        "Esta carpeta ya no hace falta según el estado actual de la carpeta administrada."
+    ),
+    DestinationSetupReasonCode.FILE_AT_DESTINATION: "Ya existe un archivo con ese nombre.",
+    DestinationSetupReasonCode.UNSAFE_REPARSE_POINT: (
+        "No pudimos confirmar que esta ubicación sea segura."
+    ),
+    DestinationSetupReasonCode.STRUCTURALLY_PROTECTED: (
+        "No pudimos confirmar que esta ubicación sea segura."
+    ),
+    DestinationSetupReasonCode.OBSERVATION_FAILED: _FALLBACK_DETAIL,
+}
+
+
+def destination_preparation_item_message(
+    outcome: DestinationPreparationOutcome,
+) -> UserMessage:
+    """FA-017.2: per-category result copy. PREPARED and ALREADY_AVAILABLE
+    are deliberately distinct titles -- provenance matters (existence !=
+    provenance, §16 of the design): a folder this call merely found
+    already present is never described as something FileAgent just did."""
+    if outcome.status is DestinationPreparationStatus.PREPARED:
+        return UserMessage(
+            title="Preparada",
+            detail="FileAgent creó esta carpeta.",
+            severity=Severity.INFO,
+            suggested_action=SuggestedAction.NONE,
+        )
+    if outcome.status is DestinationPreparationStatus.ALREADY_AVAILABLE:
+        return UserMessage(
+            title="Ya estaba disponible",
+            detail="Esta carpeta ya existía.",
+            severity=Severity.INFO,
+            suggested_action=SuggestedAction.NONE,
+        )
+    assert outcome.reason_code is not None, (
+        "NOT_PREPARED always carries a reason_code -- see "
+        "DestinationPreparationOutcome's own field docstring"
+    )
+    detail = _DESTINATION_SETUP_REASON_DETAIL.get(outcome.reason_code, _FALLBACK_DETAIL)
+    return UserMessage(
+        title="No se pudo preparar",
+        detail=detail,
+        severity=Severity.INFO
+        if outcome.reason_code is DestinationSetupReasonCode.NOT_CURRENTLY_REQUIRED
+        else Severity.ERROR,
+        suggested_action=SuggestedAction.NONE,
+    )
+
+
+_DESTINATION_SETUP_REANALYZE_NOTE = (
+    "FileAgent debe volver a comprobar la carpeta antes de organizar."
+)
+
+
+def destination_setup_summary_message(
+    outcomes: Sequence[DestinationPreparationOutcome],
+) -> UserMessage:
+    """FA-017.2: provenance-aware aggregate copy -- never implies FileAgent
+    created every listed folder when some were merely already available
+    (Round 2 Final Errata, Minor 1)."""
+    total = len(outcomes)
+    prepared = sum(
+        1 for o in outcomes if o.status is DestinationPreparationStatus.PREPARED
+    )
+    already_available = sum(
+        1
+        for o in outcomes
+        if o.status is DestinationPreparationStatus.ALREADY_AVAILABLE
+    )
+    ready = prepared + already_available
+    not_prepared = total - ready
+
+    if not_prepared > 0:
+        title = f"{ready} de {total} carpetas están listas."
+        severity = Severity.ATTENTION
+    elif already_available == 0:
+        title = f"{prepared} carpetas preparadas."
+        severity = Severity.INFO
+    elif prepared == 0:
+        title = "Estas carpetas ya estaban listas."
+        severity = Severity.INFO
+    else:
+        title = "Los destinos están listos."
+        severity = Severity.INFO
+
+    return UserMessage(
+        title=title,
+        detail=_DESTINATION_SETUP_REANALYZE_NOTE,
+        severity=severity,
         suggested_action=SuggestedAction.REANALYZE,
     )
 

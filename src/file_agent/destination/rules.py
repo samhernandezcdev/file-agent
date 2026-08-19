@@ -49,3 +49,16 @@ def resolve_destination(
         / PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY[destination_category]
         / filename
     )
+
+
+def resolve_destination_directory(
+    sandbox_root: SandboxRoot, destination_category: DestinationCategory
+) -> Path:
+    """FA-017.2: the parent-folder half of resolve_destination, without a
+    filename -- the exact prospective directory destination_engine may be
+    asked to create. Same fixed mapping, same no-I/O purity; never a
+    caller-supplied path."""
+    return (
+        sandbox_root.path
+        / PHYSICAL_DIRECTORY_FOR_DESTINATION_CATEGORY[destination_category]
+    )

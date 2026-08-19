@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import type {
   BatchApplyResultView,
+  DestinationCategory,
+  DestinationSetupItemResultView,
   ManagedRootUnavailableResultView,
   PlanAttentionView,
   PlanItemView,
@@ -22,8 +25,11 @@ import { guidanceForOutcome } from "../../lib/outcomeMessages";
 import { AnalysisSummary } from "./AnalysisSummary";
 import { ConflictSummary } from "./ConflictSummary";
 import {
+  analysisQueryKey,
+  planQueryKey,
   useAnalysisQuery,
   useApplyItemsMutation,
+  useDestinationSetupMutation,
   usePlanQuery,
   useReviewMutations,
 } from "./usePlanFlow";
@@ -49,8 +55,13 @@ export function PlanScreen({
   onApplyCompleted: (managedRootId: string, outcome: ApplyOutcome) => void;
   onApplyPendingChange: (pending: boolean) => void;
 }) {
+  const queryClient = useQueryClient();
   const analysisQuery = useAnalysisQuery(managedRootId);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [destinationResults, setDestinationResults] = useState<
+    Record<string, DestinationSetupItemResultView>
+  >({});
+  const [preparingCategories, setPreparingCategories] = useState<Set<string>>(new Set());
 
   const policyDecisionIds = useMemo(() => {
     if (analysisQuery.data?.outcome !== "ok" || analysisQuery.data.result.outcome !== "ok") {
@@ -66,6 +77,65 @@ export function PlanScreen({
   useEffect(() => {
     onApplyPendingChange(applyItems.isPending);
   }, [applyItems.isPending, onApplyPendingChange]);
+
+  const destinationSetup = useDestinationSetupMutation(
+    managedRootId,
+    policyDecisionIds,
+    (outcome) => {
+      setPreparingCategories(new Set());
+      if (outcome.outcome === "ok" && outcome.result.outcome === "ok") {
+        const items = outcome.result.items;
+        setDestinationResults((prev) => {
+          const next = { ...prev };
+          for (const item of items) {
+            next[item.destinationCategory] = item;
+          }
+          return next;
+        });
+      }
+      // managed_root_unavailable / product_error / retryable_interrupted /
+      // transport_unavailable / unknown_mutation_outcome: no local result
+      // state changes -- rendered via the guidance banner below instead,
+      // exactly like applyGuidance already does for apply.items.
+    },
+  );
+
+  function prepareCategories(categories: DestinationCategory[]) {
+    setPreparingCategories(new Set(categories));
+    destinationSetup.mutate(categories);
+  }
+
+  // FA-017.2 Round-2 remediation (Major 1): true once a destination-setup
+  // round trip has completed and the analysis/plan queries were
+  // invalidated (refetchType: "none" in useDestinationSetupMutation) but
+  // not yet followed by an explicit reanalysis. Reads
+  // Query.state.isInvalidated directly via the QueryClient, NOT
+  // analysisQuery.isStale/planQuery.isStale -- those hooks were left at
+  // their ordinary default staleTime (0), so `.isStale` also reflects
+  // plain elapsed-time staleness and would misfire almost immediately
+  // after any fetch, unrelated to destination-setup. `isFetching` is
+  // still excluded from the signal so approve/skip's own
+  // invalidateQueries call (default refetchType "active", which
+  // refetches immediately) never flashes this gate -- during that
+  // refetch isInvalidated and isFetching are both briefly true together,
+  // and only "invalidated AND idle" means "invalidated by setup, nobody
+  // is already fixing it."
+  const planIsInvalidated =
+    (Boolean(queryClient.getQueryState(analysisQueryKey(managedRootId))?.isInvalidated) &&
+      !analysisQuery.isFetching) ||
+    (Boolean(queryClient.getQueryState(planQueryKey(policyDecisionIds))?.isInvalidated) &&
+      !planQuery.isFetching);
+
+  function handleReanalyze() {
+    // Per-category setup results and any leftover file selection belong
+    // to the plan that is about to be replaced -- cleared here so a fresh
+    // plan.create always starts every attention/item from its own honest
+    // default rendering, never a stale result banner or a selection built
+    // against actionIds a fresh plan won't recognize.
+    setDestinationResults({});
+    setSelected(new Set());
+    analysisQuery.refetch();
+  }
 
   if (analysisQuery.isLoading) {
     return <Progress label="Analizando…" />;
@@ -127,6 +197,14 @@ export function PlanScreen({
   }
 
   const applyGuidance = applyItems.data ? guidanceForOutcome(applyItems.data, "apply") : null;
+  const destinationSetupGuidance = destinationSetup.data
+    ? guidanceForOutcome(destinationSetup.data, "destination_setup")
+    : null;
+  const destinationSetupRootUnavailable =
+    destinationSetup.data?.outcome === "ok" &&
+    destinationSetup.data.result.outcome === "managed_root_unavailable"
+      ? destinationSetup.data.result.message
+      : null;
 
   function handleApply() {
     const ids = [...selected];
@@ -170,7 +248,56 @@ export function PlanScreen({
         }
       />
 
-      {selectableIds.length > 0 ? (
+      {planIsInvalidated ? (
+        <div className="mb-4">
+          <Banner
+            severity="attention"
+            title="Este plan ya no está actualizado."
+            detail="FileAgent preparó carpetas de destino desde la última vez que se analizó esta carpeta. Analiza de nuevo para ver el estado actual antes de organizar."
+            action={
+              <Button variant="primary" onClick={handleReanalyze}>
+                Analizar de nuevo
+              </Button>
+            }
+          />
+        </div>
+      ) : null}
+
+      {attentions.length >= 2 ? (
+        <div className="mb-4 flex items-center justify-between rounded-md border border-warning/30 bg-surface-muted p-3">
+          <p className="text-sm font-medium text-foreground">
+            Faltan {attentions.length} carpetas para completar la organización
+          </p>
+          <Button
+            variant="primary"
+            loading={destinationSetup.isPending}
+            onClick={() => prepareCategories(attentions.map((a) => a.destinationCategory))}
+          >
+            Preparar {attentions.length} carpetas
+          </Button>
+        </div>
+      ) : null}
+
+      {destinationSetupGuidance ? (
+        <div className="mb-4">
+          <Banner
+            severity="error"
+            title={destinationSetupGuidance.title}
+            detail={destinationSetupGuidance.detail}
+          />
+        </div>
+      ) : null}
+      {destinationSetupRootUnavailable ? (
+        <div className="mb-4">
+          <Banner
+            severity="error"
+            title={destinationSetupRootUnavailable.title}
+            detail={destinationSetupRootUnavailable.detail}
+          />
+        </div>
+      ) : null}
+
+      {selectableIds.length > 0 && !planIsInvalidated ? (
         <div className="mb-2 flex items-center gap-2">
           <Checkbox
             checked={allSelectableSelected ? true : selectedSelectableCount > 0 ? "indeterminate" : false}
@@ -192,7 +319,13 @@ export function PlanScreen({
               <ConflictSummary
                 key={attention.destinationLabel}
                 attention={attention}
-                onReanalyze={() => analysisQuery.refetch()}
+                onReanalyze={handleReanalyze}
+                onPrepare={() => prepareCategories([attention.destinationCategory])}
+                preparing={
+                  destinationSetup.isPending &&
+                  preparingCategories.has(attention.destinationCategory)
+                }
+                result={destinationResults[attention.destinationCategory]}
               />
             ))}
 
@@ -200,7 +333,7 @@ export function PlanScreen({
               <FileRow
                 key={item.actionId}
                 leading={
-                  item.selectable ? (
+                  item.selectable && !planIsInvalidated ? (
                     <Checkbox
                       checked={selected.has(item.actionId)}
                       onCheckedChange={() => toggle(item.actionId)}
@@ -258,7 +391,7 @@ export function PlanScreen({
         <Button
           variant="primary"
           onClick={handleApply}
-          disabled={selected.size === 0 || applyItems.isPending}
+          disabled={selected.size === 0 || applyItems.isPending || planIsInvalidated}
         >
           Organizar {selected.size} archivo{selected.size === 1 ? "" : "s"}
         </Button>

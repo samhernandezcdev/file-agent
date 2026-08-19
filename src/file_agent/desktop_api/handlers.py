@@ -1,4 +1,4 @@
-"""The 14 closed command handlers. Every handler calls exactly one
+"""The 15 closed command handlers. Every handler calls exactly one
 FileAgentApplicationService public method (or, for read-model queries, the
 same public API surface) and maps its result through views.py -- never
 managed_fs, never TransactionEngine/RecoveryEngine internals, never
@@ -151,6 +151,17 @@ def handle_recovery_restore_capture(
     return v.restore_result_view(result)
 
 
+def handle_destination_setup_prepare(
+    service: FileAgentApplicationService, params: p.DestinationSetupPrepareParams
+) -> v.DestinationSetupResultView | v.ManagedRootUnavailableResultView:
+    result = service.prepare_destinations(
+        params.managed_root_id, list(params.destination_categories)
+    )
+    if isinstance(result, ManagedRootUnavailable):
+        return v.managed_root_unavailable_result_view(result)
+    return v.destination_setup_result_view(result)
+
+
 class _HandlerEntry:
     __slots__ = ("handler", "params_model")
 
@@ -193,5 +204,8 @@ HANDLERS: dict[str, _HandlerEntry] = {
     ),
     "recovery.restore_capture": _HandlerEntry(
         p.RecoveryRestoreCaptureParams, handle_recovery_restore_capture
+    ),
+    "destination_setup.prepare": _HandlerEntry(
+        p.DestinationSetupPrepareParams, handle_destination_setup_prepare
     ),
 }

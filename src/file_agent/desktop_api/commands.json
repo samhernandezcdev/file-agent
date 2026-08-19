@@ -13,6 +13,7 @@
     {"name": "history.get_batch", "retry_safety": "safe_retry"},
     {"name": "history.list_recent", "retry_safety": "safe_retry"},
     {"name": "recovery.undo_transaction", "retry_safety": "unknown_on_disconnect"},
-    {"name": "recovery.restore_capture", "retry_safety": "unknown_on_disconnect"}
+    {"name": "recovery.restore_capture", "retry_safety": "unknown_on_disconnect"},
+    {"name": "destination_setup.prepare", "retry_safety": "unknown_on_disconnect"}
   ]
 }

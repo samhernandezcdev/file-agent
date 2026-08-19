@@ -77,20 +77,37 @@ export type Selectedcount = number;
 export type Skippedcount = number;
 export type Startedat1 = string;
 export type Status4 = "completed" | "incomplete";
+/**
+ * A logical organization destination — not a filesystem path, absolute
+ * or relative. Resolving this into an actual location (organization root,
+ * category folder, filename) is explicitly deferred to a future ticket;
+ * this enum exists only to constrain proposals to a small, stable, typed
+ * vocabulary instead of letting arbitrary strings ("Docs", "documents/",
+ * ad-hoc casing) enter durable proposal records.
+ */
+export type DestinationCategory = "documents" | "images" | "audio" | "video" | "archives" | "code" | "executables";
+export type Destinationlabel = string;
+export type Status5 = "prepared" | "already_available" | "not_prepared";
+export type Destinationcategories = DestinationCategory[];
+export type Managedrootid3 = string;
+export type Items3 = DestinationSetupItemResultView[];
+export type Managedrootid4 = string;
+export type Outcome3 = "ok";
+export type Setupid = string;
 export type Batchid2 = string;
 export type Includeitems = boolean;
 export type Limit = number;
-export type Outcome3 = "unavailable";
+export type Outcome4 = "unavailable";
 export type Displaypath = string;
 export type Id = string;
-export type Status5 = "available" | "unavailable";
+export type Status6 = "available" | "unavailable";
 export type Roots = ManagedRootView[];
-export type Outcome4 = "managed_root_unavailable";
+export type Outcome5 = "managed_root_unavailable";
 export type Path = string;
-export type Managedrootid3 = string;
+export type Managedrootid5 = string;
 export type Affectedfilenames = string[];
 export type Categorylabel1 = string;
-export type Destinationlabel = string;
+export type Destinationlabel1 = string;
 export type Variant = "missing_destination_folder";
 export type Policydecisionids1 = string[];
 export type Actionid = string;
@@ -101,7 +118,7 @@ export type Filename2 = string;
 export type Selectable = boolean;
 export type Severity1 = string;
 export type Sourcedisplaypath2 = string;
-export type Status6 = string;
+export type Status7 = string;
 export type Title1 = string;
 export type Blocked = number;
 export type Conflicts = number;
@@ -115,9 +132,9 @@ export type Reviewrequired = number;
 export type Skipped1 = number;
 export type Attentions = PlanAttentionView[];
 export type Id1 = string;
-export type Items3 = PlanItemView[];
-export type Managedrootid4 = string | null;
-export type Outcome5 = "ok";
+export type Items4 = PlanItemView[];
+export type Managedrootid6 = string | null;
+export type Outcome6 = "ok";
 export type Rootdisplaypath = string | null;
 export type Structuralprotectionnote = string | null;
 export type Batchid3 = string;
@@ -126,19 +143,19 @@ export type Startedat2 = string | null;
 export type Rows = (BatchHistoryEntryView | UnavailableBatchHistoryRowView)[];
 export type Captureid = string;
 export type Transactionid3 = string;
-export type Managedrootid5 = string;
-export type Status7 = "succeeded" | "rejected";
+export type Managedrootid7 = string;
+export type Status8 = "succeeded" | "rejected";
 export type Captureid1 = string;
 export type Recoveryid = string | null;
 export type Restoreddisplaypath = string | null;
-export type Status8 = "succeeded" | "rejected" | "failed";
+export type Status9 = "succeeded" | "rejected" | "failed";
 export type Note = string | null;
 export type Policydecisionid5 = string;
 export type Policydecisionid6 = string;
-export type Status9 = "succeeded" | "rejected";
+export type Status10 = "succeeded" | "rejected";
 export type Recoveryid1 = string | null;
 export type Restoreddisplaypath1 = string | null;
-export type Status10 = "succeeded" | "rejected" | "failed";
+export type Status11 = "succeeded" | "rejected" | "failed";
 export type Transactionid4 = string;
 
 export interface DesktopApiTypesRoot {
@@ -155,6 +172,10 @@ export interface DesktopApiTypesRoot {
   BatchApplySummaryView: BatchApplySummaryView;
   BatchHistoryEntryView: BatchHistoryEntryView;
   BatchHistoryItemView: BatchHistoryItemView;
+  DestinationCategory: DestinationCategory;
+  DestinationSetupItemResultView: DestinationSetupItemResultView;
+  DestinationSetupPrepareParams: DestinationSetupPrepareParams;
+  DestinationSetupResultView: DestinationSetupResultView;
   HistoryGetBatchParams: HistoryGetBatchParams;
   HistoryListRecentParams: HistoryListRecentParams;
   HistoryLookupFailureView: HistoryLookupFailureView;
@@ -280,6 +301,23 @@ export interface BatchHistoryItemView {
   status: Status3;
   transactionId: Transactionid2;
 }
+export interface DestinationSetupItemResultView {
+  destinationCategory: DestinationCategory;
+  destinationLabel: Destinationlabel;
+  message: UserMessageView;
+  status: Status5;
+}
+export interface DestinationSetupPrepareParams {
+  destinationCategories: Destinationcategories;
+  managedRootId: Managedrootid3;
+}
+export interface DestinationSetupResultView {
+  items: Items3;
+  managedRootId: Managedrootid4;
+  outcome: Outcome3;
+  setupId: Setupid;
+  summaryMessage: UserMessageView;
+}
 export interface HistoryGetBatchParams {
   batchId: Batchid2;
   includeItems?: Includeitems;
@@ -289,7 +327,7 @@ export interface HistoryListRecentParams {
 }
 export interface HistoryLookupFailureView {
   message: UserMessageView;
-  outcome: Outcome3;
+  outcome: Outcome4;
 }
 export interface ManagedRootListView {
   roots: Roots;
@@ -297,7 +335,7 @@ export interface ManagedRootListView {
 export interface ManagedRootView {
   displayPath: Displaypath;
   id: Id;
-  status: Status5;
+  status: Status6;
 }
 /**
  * The `outcome` discriminant shared by every command whose
@@ -309,14 +347,14 @@ export interface ManagedRootView {
  */
 export interface ManagedRootUnavailableResultView {
   message: UserMessageView;
-  outcome: Outcome4;
+  outcome: Outcome5;
 }
 export interface ManagedRootsAddParams {
   path: Path;
 }
 export interface ManagedRootsListParams {}
 export interface ManagedRootsRemoveParams {
-  managedRootId: Managedrootid3;
+  managedRootId: Managedrootid5;
 }
 /**
  * FA-017.1 §18: an additive, presentation-owned aggregation over items
@@ -327,7 +365,8 @@ export interface ManagedRootsRemoveParams {
 export interface PlanAttentionView {
   affectedFilenames: Affectedfilenames;
   categoryLabel: Categorylabel1;
-  destinationLabel: Destinationlabel;
+  destinationCategory: DestinationCategory;
+  destinationLabel: Destinationlabel1;
   message: UserMessageView;
   variant: Variant;
 }
@@ -343,7 +382,7 @@ export interface PlanItemView {
   selectable: Selectable;
   severity: Severity1;
   sourceDisplayPath: Sourcedisplaypath2;
-  status: Status6;
+  status: Status7;
   title: Title1;
 }
 export interface PlanSummaryView {
@@ -361,9 +400,9 @@ export interface PlanSummaryView {
 export interface PlanView {
   attentions: Attentions;
   id: Id1;
-  items: Items3;
-  managedRootId: Managedrootid4;
-  outcome: Outcome5;
+  items: Items4;
+  managedRootId: Managedrootid6;
+  outcome: Outcome6;
   rootDisplayPath: Rootdisplaypath;
   structuralProtectionNote: Structuralprotectionnote;
   summary: PlanSummaryView;
@@ -384,16 +423,16 @@ export interface RecoveryUndoTransactionParams {
   transactionId: Transactionid3;
 }
 export interface RemoveManagedRootResultView {
-  managedRootId: Managedrootid5;
+  managedRootId: Managedrootid7;
   message: UserMessageView | null;
-  status: Status7;
+  status: Status8;
 }
 export interface RestoreResultView {
   captureId: Captureid1;
   message: UserMessageView | null;
   recoveryId: Recoveryid;
   restoredDisplayPath: Restoreddisplaypath;
-  status: Status8;
+  status: Status9;
 }
 export interface ReviewActionParams {
   note?: Note;
@@ -402,12 +441,12 @@ export interface ReviewActionParams {
 export interface ReviewActionResultView {
   message: UserMessageView | null;
   policyDecisionId: Policydecisionid6;
-  status: Status9;
+  status: Status10;
 }
 export interface UndoResultView {
   message: UserMessageView | null;
   recoveryId: Recoveryid1;
   restoredDisplayPath: Restoreddisplaypath1;
-  status: Status10;
+  status: Status11;
   transactionId: Transactionid4;
 }

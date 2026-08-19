@@ -73,6 +73,69 @@ const PLAN_RESULT = {
   },
 };
 
+const PLAN_RESULT_WITH_ATTENTIONS = {
+  outcome: "ok",
+  result: {
+    ...PLAN_RESULT.result,
+    attentions: [
+      {
+        variant: "missing_destination_folder",
+        categoryLabel: "Documento",
+        destinationLabel: "Documents",
+        destinationCategory: "documents",
+        message: {
+          title: "Falta preparar esta carpeta",
+          detail: "1 archivo está listo para clasificarse como Documento, pero falta:\n\nDocuments",
+          severity: "attention",
+          suggestedAction: "reanalyze",
+        },
+        affectedFilenames: ["invoice.pdf"],
+      },
+      {
+        variant: "missing_destination_folder",
+        categoryLabel: "Imagen",
+        destinationLabel: "Images",
+        destinationCategory: "images",
+        message: {
+          title: "Falta preparar esta carpeta",
+          detail: "1 archivo está listo para clasificarse como Imagen, pero falta:\n\nImages",
+          severity: "attention",
+          suggestedAction: "reanalyze",
+        },
+        affectedFilenames: ["photo.jpg"],
+      },
+    ],
+  },
+};
+
+function destinationSetupResult(
+  items: { destinationCategory: string; destinationLabel: string; status: string }[],
+) {
+  return {
+    outcome: "ok",
+    result: {
+      outcome: "ok",
+      setupId: "setup-1",
+      managedRootId: "root-1",
+      items: items.map((item) => ({
+        ...item,
+        message: {
+          title: item.status === "prepared" ? "Preparada" : "Ya estaba disponible",
+          detail: item.status === "prepared" ? "FileAgent creó esta carpeta." : "Esta carpeta ya existía.",
+          severity: "info",
+          suggestedAction: "none",
+        },
+      })),
+      summaryMessage: {
+        title: "Los destinos están listos.",
+        detail: "FileAgent debe volver a comprobar la carpeta antes de organizar.",
+        severity: "info",
+        suggestedAction: "reanalyze",
+      },
+    },
+  };
+}
+
 function mockInvokeByCommand() {
   vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
     const command = (args as { command?: string })?.command;
@@ -176,5 +239,115 @@ describe("PlanScreen", () => {
         expect.objectContaining({ outcome: "ok" }),
       );
     });
+  });
+});
+
+describe("PlanScreen -- destination setup", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  function mockWithAttentions(prepareResult: unknown) {
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTIONS;
+      if (command === "destination_setup.prepare") return prepareResult;
+      return { outcome: "ok", result: {} };
+    });
+  }
+
+  function renderWithAttentions() {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <PlanScreen
+          managedRootId="root-1"
+          onApplyCompleted={vi.fn()}
+          onApplyPendingChange={vi.fn()}
+        />
+      </QueryClientProvider>,
+    );
+  }
+
+  it("shows an aggregate 'Preparar N carpetas' strip with 2+ attentions, requesting exactly those categories", async () => {
+    mockWithAttentions(
+      destinationSetupResult([
+        { destinationCategory: "documents", destinationLabel: "Documents", status: "prepared" },
+        { destinationCategory: "images", destinationLabel: "Images", status: "prepared" },
+      ]),
+    );
+    renderWithAttentions();
+    await screen.findByText("Faltan 2 carpetas para completar la organización");
+
+    await userEvent.click(screen.getByRole("button", { name: "Preparar 2 carpetas" }));
+
+    await waitFor(() => {
+      const call = vi
+        .mocked(invoke)
+        .mock.calls.find(
+          ([, args]) => (args as { command?: string })?.command === "destination_setup.prepare",
+        );
+      expect(call).toBeDefined();
+      const params = (call?.[1] as { params: { destinationCategories: string[] } }).params;
+      expect(params.destinationCategories).toEqual(["documents", "images"]);
+    });
+
+    expect(await screen.findByText("Documents — Preparada")).toBeInTheDocument();
+    expect(await screen.findByText("Images — Preparada")).toBeInTheDocument();
+  });
+
+  it("per-panel 'Preparar carpeta' requests exactly that one category, leaving the other attention untouched", async () => {
+    mockWithAttentions(
+      destinationSetupResult([
+        { destinationCategory: "documents", destinationLabel: "Documents", status: "prepared" },
+      ]),
+    );
+    renderWithAttentions();
+    const prepareButtons = await screen.findAllByRole("button", { name: "Preparar carpeta" });
+    expect(prepareButtons).toHaveLength(2);
+
+    await userEvent.click(prepareButtons[0]);
+
+    await waitFor(() => {
+      const call = vi
+        .mocked(invoke)
+        .mock.calls.find(
+          ([, args]) => (args as { command?: string })?.command === "destination_setup.prepare",
+        );
+      const params = (call?.[1] as { params: { destinationCategories: string[] } }).params;
+      expect(params.destinationCategories).toEqual(["documents"]);
+    });
+
+    expect(await screen.findByText("Documents — Preparada")).toBeInTheDocument();
+    // The Images attention is untouched -- still the original panel, not a result.
+    expect(screen.getByRole("button", { name: "Preparar carpeta" })).toBeInTheDocument();
+  });
+
+  it("never triggers analysis.run/plan.create again after a prepare result (no automatic reanalysis)", async () => {
+    mockWithAttentions(
+      destinationSetupResult([
+        { destinationCategory: "documents", destinationLabel: "Documents", status: "prepared" },
+        { destinationCategory: "images", destinationLabel: "Images", status: "prepared" },
+      ]),
+    );
+    renderWithAttentions();
+    await screen.findByText("Faltan 2 carpetas para completar la organización");
+    const analysisCallsBefore = vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]) => (args as { command?: string })?.command === "analysis.run")
+      .length;
+
+    await userEvent.click(screen.getByRole("button", { name: "Preparar 2 carpetas" }));
+    await screen.findByText("Documents — Preparada");
+
+    const analysisCallsAfter = vi
+      .mocked(invoke)
+      .mock.calls.filter(([, args]) => (args as { command?: string })?.command === "analysis.run")
+      .length;
+    expect(analysisCallsAfter).toBe(analysisCallsBefore);
   });
 });

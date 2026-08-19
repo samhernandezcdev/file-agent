@@ -13,6 +13,15 @@ from weakref import WeakKeyDictionary
 
 from file_agent import structural_safety
 from file_agent.application import history, managed_roots, queries
+from file_agent.application.destination_setup import (
+    DestinationPreparationOutcome,
+    DestinationPreparationStatus,
+    DestinationSetupReasonCode,
+    DestinationSetupResult,
+    destination_setup_completed_event,
+    destination_setup_item_result_event,
+    destination_setup_started_event,
+)
 from file_agent.application.dto import (
     AnalysisFailure,
     AnalyzedItem,
@@ -46,12 +55,17 @@ from file_agent.application.managed_roots import (
     ManagedRootView,
     RemoveManagedRootResult,
 )
-from file_agent.application.organization_plan import OrganizationPlan
+from file_agent.application.organization_plan import (
+    OrganizationPlan,
+    missing_destination_categories,
+)
 from file_agent.application.planner import build_organization_plan
 from file_agent.classifier import FileClassifier, classification_event
-from file_agent.destination import resolve_destination
+from file_agent.destination import resolve_destination, resolve_destination_directory
+from file_agent.destination_engine import prepare_destination_directory
 from file_agent.domain import (
     CompletedMoveEvidence,
+    DestinationCategory,
     DiscoveredFile,
     ExecutionAuthorization,
     HumanReviewOutcome,
@@ -185,6 +199,29 @@ def _structural_detail(
     if outcome.kind is structural_safety.StructuralProtectionKind.HARD_EXCLUSION:
         return f"path is beneath a hard-excluded directory: {outcome.excluded_name}"
     return f"path is inside a protected project tree rooted at {outcome.root_path}"
+
+
+def _outcome_for_leaf_state(
+    category: DestinationCategory, leaf_state: "structural_safety.LeafState"
+) -> DestinationPreparationOutcome:
+    """FA-017.2: the one shared mapping from a structural_safety.LeafState
+    to a DestinationPreparationOutcome, used identically by
+    _prepare_one_destination's pre-mkdir check and its post-
+    FileExistsError re-inspection -- see structural_safety.inspect_leaf's
+    own docstring for the fail-closed classification this maps."""
+    if leaf_state is structural_safety.LeafState.NORMAL_DIRECTORY:
+        return DestinationPreparationOutcome(
+            category, DestinationPreparationStatus.ALREADY_AVAILABLE, None
+        )
+    if leaf_state is structural_safety.LeafState.NORMAL_FILE:
+        reason = DestinationSetupReasonCode.FILE_AT_DESTINATION
+    elif leaf_state is structural_safety.LeafState.REPARSE_POINT:
+        reason = DestinationSetupReasonCode.UNSAFE_REPARSE_POINT
+    else:  # INSPECTION_FAILED (or, defensively, ABSENT reached via this path)
+        reason = DestinationSetupReasonCode.OBSERVATION_FAILED
+    return DestinationPreparationOutcome(
+        category, DestinationPreparationStatus.NOT_PREPARED, reason
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1373,4 +1410,163 @@ class FileAgentApplicationService:
         active/live-safe."""
         return build_organization_plan(
             self._store, self._app_paths, policy_decision_ids, clock=self._clock
+        )
+
+    # --- Destination setup (FA-017.2) -----------------------------------------
+
+    def prepare_destinations(
+        self,
+        managed_root_id: UUID,
+        destination_categories: Sequence[DestinationCategory],
+    ) -> DestinationSetupResult | ManagedRootUnavailable:
+        """DESTINATION NEED != DIRECTORY CREATION AUTHORIZATION. A category
+        the caller requests is never trusted on its own -- current
+        organization need is reconstructed fresh, internally, via the exact
+        same analyze_managed_root/create_organization_plan machinery
+        analysis.run/plan.create already use (never exposed to the caller
+        as a new plan), and only a requested category that is ALSO in that
+        fresh result's missing_destination_categories() proceeds to any
+        filesystem interaction at all. A category outside current need is
+        rejected with zero find_structural_protection/inspect_leaf/mkdir
+        calls -- not merely a rejection, a complete absence of filesystem
+        probing for that category.
+
+        Correctness over efficiency: this pays for a second, internal
+        analysis pass (on top of whatever led the user to attempt this),
+        deliberately, rather than trusting any client-supplied or
+        previously-computed fact about what's currently missing."""
+        root_outcome = self._resolve_active_managed_root(managed_root_id)
+        if isinstance(root_outcome, ManagedRootUnavailable):
+            return root_outcome
+        sandbox_root = root_outcome
+
+        analysis_outcome = self.analyze_managed_root(managed_root_id)
+        if isinstance(analysis_outcome, ManagedRootUnavailable):
+            return analysis_outcome
+        fresh_plan_outcome = self.create_organization_plan(
+            [item.policy_decision_id for item in analysis_outcome.items]
+        )
+        if isinstance(fresh_plan_outcome, ManagedRootUnavailable):
+            return fresh_plan_outcome
+        fresh_plan = fresh_plan_outcome
+
+        required_categories = missing_destination_categories(fresh_plan.items)
+
+        deduped: list[DestinationCategory] = []
+        seen: set[DestinationCategory] = set()
+        for category in destination_categories:
+            if category not in seen:
+                seen.add(category)
+                deduped.append(category)
+
+        setup_id = uuid4()
+        started_at = self._clock()
+        # If this itself raises, it propagates unwrapped -- zero mutation
+        # has happened yet, exactly like apply_items' own STARTED-persist-
+        # failure rule (the wire protocol's own unconditional `started`
+        # frame, already sent by this point, is a separate mechanism from
+        # this audit event; the worker loop's existing generic exception
+        # handling renders this a normal kind="fatal" terminal frame, never
+        # a crash, never unknown_mutation_outcome).
+        self._store.record_event(
+            destination_setup_started_event(
+                setup_id, managed_root_id, tuple(deduped), started_at
+            )
+        )
+
+        outcomes: list[DestinationPreparationOutcome] = []
+        for category in deduped:
+            if category in required_categories:
+                outcome = self._prepare_one_destination(sandbox_root, category)
+            else:
+                outcome = DestinationPreparationOutcome(
+                    category,
+                    DestinationPreparationStatus.NOT_PREPARED,
+                    DestinationSetupReasonCode.NOT_CURRENTLY_REQUIRED,
+                )
+            outcomes.append(outcome)
+            try:
+                self._store.record_event(
+                    destination_setup_item_result_event(
+                        setup_id, outcome, self._clock()
+                    )
+                )
+            except (DatabaseUnavailableError, IntegrityConstraintError):
+                # The real filesystem outcome (if any mutation happened) is
+                # already captured, truthfully, in `outcome` above -- only
+                # the durable audit checkpoint failed. Never reinterpreted
+                # as a failed/unknown outcome; the batch continues to the
+                # next requested category (best-effort, no rollback,
+                # matching §10's batch semantics).
+                pass
+
+        try:
+            self._store.record_event(
+                destination_setup_completed_event(setup_id, self._clock())
+            )
+        except (DatabaseUnavailableError, IntegrityConstraintError):
+            # Every per-category outcome is already captured in `outcomes`
+            # above -- only the batch-level completion marker failed to
+            # persist. No effect on the returned result.
+            pass
+
+        return DestinationSetupResult(
+            setup_id=setup_id,
+            managed_root_id=managed_root_id,
+            outcomes=tuple(outcomes),
+        )
+
+    def _prepare_one_destination(
+        self, sandbox_root: SandboxRoot, category: DestinationCategory
+    ) -> DestinationPreparationOutcome:
+        """Runs only for a category already proven currently-required by
+        prepare_destinations. Every check here is re-derived fresh, live --
+        never trusts the fresh_plan rebuild above for anything beyond
+        "this category is currently needed"; structural safety in
+        particular is independently re-verified, exactly mirroring
+        _apply_one's own "re-derive fresh, never trust a prior finding"
+        discipline for the destination side of a real move."""
+        parent_path = resolve_destination_directory(sandbox_root, category)
+
+        structural_outcome = structural_safety.find_structural_protection(
+            parent_path, sandbox_root.path, inspect_candidate_reference=False
+        )
+        if structural_outcome is not None:
+            return DestinationPreparationOutcome(
+                category,
+                DestinationPreparationStatus.NOT_PREPARED,
+                DestinationSetupReasonCode.STRUCTURALLY_PROTECTED,
+            )
+
+        leaf_state = structural_safety.inspect_leaf(parent_path)
+        if leaf_state is not structural_safety.LeafState.ABSENT:
+            return _outcome_for_leaf_state(category, leaf_state)
+
+        try:
+            prepare_destination_directory(parent_path)
+        except FileExistsError:
+            # TOCTOU: something appeared between the pre-check above and
+            # this call. A FRESH inspect_leaf() call decides the outcome --
+            # FileExistsError alone is never, by itself, evidence of
+            # ALREADY_AVAILABLE. mkdir is never attempted a second time for
+            # this category, under any circumstance.
+            fresh_state = structural_safety.inspect_leaf(parent_path)
+            if fresh_state is structural_safety.LeafState.ABSENT:
+                # Raced away a second time -- a pathological, extremely
+                # narrow window. Fail closed rather than retry.
+                return DestinationPreparationOutcome(
+                    category,
+                    DestinationPreparationStatus.NOT_PREPARED,
+                    DestinationSetupReasonCode.OBSERVATION_FAILED,
+                )
+            return _outcome_for_leaf_state(category, fresh_state)
+        except OSError:
+            return DestinationPreparationOutcome(
+                category,
+                DestinationPreparationStatus.NOT_PREPARED,
+                DestinationSetupReasonCode.OBSERVATION_FAILED,
+            )
+
+        return DestinationPreparationOutcome(
+            category, DestinationPreparationStatus.PREPARED, None
         )

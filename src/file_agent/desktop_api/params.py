@@ -13,6 +13,8 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict
 from pydantic.alias_generators import to_camel
 
+from file_agent.domain import DestinationCategory
+
 
 class ParamsModel(BaseModel):
     model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
@@ -72,3 +74,12 @@ class RecoveryUndoTransactionParams(ParamsModel):
 
 class RecoveryRestoreCaptureParams(ParamsModel):
     capture_id: UUID
+
+
+class DestinationSetupPrepareParams(ParamsModel):
+    managed_root_id: UUID
+    destination_categories: tuple[DestinationCategory, ...]
+    """Pydantic validates every entry against the closed 7-member
+    DestinationCategory enum -- a value outside that set is rejected as
+    invalid_params before any application code runs. Never a path; never
+    an arbitrary string."""
