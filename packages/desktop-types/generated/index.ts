@@ -88,9 +88,13 @@ export type Roots = ManagedRootView[];
 export type Outcome4 = "managed_root_unavailable";
 export type Path = string;
 export type Managedrootid3 = string;
+export type Affectedfilenames = string[];
+export type Categorylabel1 = string;
+export type Destinationlabel = string;
+export type Variant = "missing_destination_folder";
 export type Policydecisionids1 = string[];
 export type Actionid = string;
-export type Categorylabel1 = string;
+export type Categorylabel2 = string;
 export type Destinationdisplaypath2 = string | null;
 export type Detail1 = string;
 export type Filename2 = string;
@@ -109,6 +113,7 @@ export type Protected = number;
 export type Ready = number;
 export type Reviewrequired = number;
 export type Skipped1 = number;
+export type Attentions = PlanAttentionView[];
 export type Id1 = string;
 export type Items3 = PlanItemView[];
 export type Managedrootid4 = string | null;
@@ -159,6 +164,7 @@ export interface DesktopApiTypesRoot {
   ManagedRootsAddParams: ManagedRootsAddParams;
   ManagedRootsListParams: ManagedRootsListParams;
   ManagedRootsRemoveParams: ManagedRootsRemoveParams;
+  PlanAttentionView: PlanAttentionView;
   PlanCreateParams: PlanCreateParams;
   PlanItemView: PlanItemView;
   PlanSummaryView: PlanSummaryView;
@@ -312,12 +318,25 @@ export interface ManagedRootsListParams {}
 export interface ManagedRootsRemoveParams {
   managedRootId: Managedrootid3;
 }
+/**
+ * FA-017.1 §18: an additive, presentation-owned aggregation over items
+ * that share the same underlying blocker -- computed here so React never
+ * branches on `reason_code` itself (which never appears on this DTO, or
+ * anywhere else on the wire).
+ */
+export interface PlanAttentionView {
+  affectedFilenames: Affectedfilenames;
+  categoryLabel: Categorylabel1;
+  destinationLabel: Destinationlabel;
+  message: UserMessageView;
+  variant: Variant;
+}
 export interface PlanCreateParams {
   policyDecisionIds: Policydecisionids1;
 }
 export interface PlanItemView {
   actionId: Actionid;
-  categoryLabel: Categorylabel1;
+  categoryLabel: Categorylabel2;
   destinationDisplayPath: Destinationdisplaypath2;
   detail: Detail1;
   filename: Filename2;
@@ -340,6 +359,7 @@ export interface PlanSummaryView {
   skipped: Skipped1;
 }
 export interface PlanView {
+  attentions: Attentions;
   id: Id1;
   items: Items3;
   managedRootId: Managedrootid4;

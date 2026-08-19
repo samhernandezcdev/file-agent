@@ -32,7 +32,7 @@ describe("ManagedRootsScreen", () => {
   it("shows the empty state when there are no managed roots", async () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     renderScreen();
-    expect(await screen.findByText(/todavía no agregaste ninguna carpeta/i)).toBeInTheDocument();
+    expect(await screen.findByText(/organiza una carpeta con fileagent/i)).toBeInTheDocument();
   });
 
   it("renders roots and marks an unavailable one distinctly", async () => {
@@ -49,15 +49,16 @@ describe("ManagedRootsScreen", () => {
     expect(await screen.findByText("C:/Descargas")).toBeInTheDocument();
     expect(await screen.findByText("C:/Removida")).toBeInTheDocument();
     expect(screen.getByText(/no disponible en este momento/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Agregar carpeta" })).toBeInTheDocument();
   });
 
-  it("calls the native folder picker when 'Agregar carpeta' is clicked", async () => {
+  it("calls the native folder picker when 'Elegir una carpeta' is clicked", async () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     vi.mocked(open).mockResolvedValue(null);
     renderScreen();
-    await screen.findByText(/todavía no agregaste ninguna carpeta/i);
+    await screen.findByText(/organiza una carpeta con fileagent/i);
 
-    await userEvent.click(screen.getByRole("button", { name: "Agregar carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Elegir una carpeta" }));
 
     expect(open).toHaveBeenCalledWith({ directory: true, multiple: false });
   });
@@ -66,9 +67,9 @@ describe("ManagedRootsScreen", () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     vi.mocked(open).mockResolvedValue(null);
     renderScreen();
-    await screen.findByText(/todavía no agregaste ninguna carpeta/i);
+    await screen.findByText(/organiza una carpeta con fileagent/i);
 
-    await userEvent.click(screen.getByRole("button", { name: "Agregar carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Elegir una carpeta" }));
 
     await waitFor(() => {
       // Only the initial managed_roots.list call happened -- no
@@ -86,9 +87,9 @@ describe("ManagedRootsScreen", () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     vi.mocked(open).mockResolvedValue("C:/Users/Ana/Descargas");
     renderScreen();
-    await screen.findByText(/todavía no agregaste ninguna carpeta/i);
+    await screen.findByText(/organiza una carpeta con fileagent/i);
 
-    await userEvent.click(screen.getByRole("button", { name: "Agregar carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Elegir una carpeta" }));
 
     await waitFor(() => {
       const addCall = vi

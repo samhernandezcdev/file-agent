@@ -1,87 +1,24 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  color: #0f0f0f;
-  background-color: #f6f6f6;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
-.fa-app {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 1.5rem;
-}
-
-nav[aria-label="Navegación principal"] {
-  display: flex;
-  gap: 0.5rem;
-  margin-bottom: 1rem;
-}
-
-input,
-.fa-button {
-  border-radius: 6px;
-  border: 1px solid #ccc;
-  padding: 0.5em 1em;
-  font-size: 1em;
-  font-family: inherit;
-  background-color: #ffffff;
-  color: #0f0f0f;
-  cursor: pointer;
-}
-
-.fa-button-primary {
-  background-color: #2b6cb0;
-  color: #ffffff;
-  border-color: #2b6cb0;
-}
-
-.fa-button-danger {
-  background-color: #ffffff;
-  color: #c53030;
-  border-color: #c53030;
-}
-
-.fa-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-/* Status is never communicated by color alone -- every Banner also
-   carries a text severity label (see components/ui/Banner.tsx). */
-.fa-banner {
-  border-left: 4px solid #999;
-  padding: 0.5em 1em;
-  margin: 0.75em 0;
-}
-.fa-banner-info {
-  border-left-color: #2b6cb0;
-}
-.fa-banner-attention {
-  border-left-color: #b7791f;
-}
-.fa-banner-error {
-  border-left-color: #c53030;
+body {
+  background-color: var(--fa-background);
+  color: var(--fa-foreground);
 }
 
 /* Visible focus for every interactive element -- never removed without a
    replacement (accessibility requirement, FA-017 design §"ACCESSIBILITY"). */
 a:focus-visible,
 button:focus-visible,
-input:focus-visible {
-  outline: 3px solid #2b6cb0;
+input:focus-visible,
+[role="checkbox"]:focus-visible,
+[role="button"]:focus-visible {
+  outline: 3px solid var(--fa-focus-ring);
   outline-offset: 2px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #1f1f1f;
-  }
-  input,
-  .fa-button {
-    background-color: #2a2a2a;
-    color: #f6f6f6;
-    border-color: #555;
-  }
 }

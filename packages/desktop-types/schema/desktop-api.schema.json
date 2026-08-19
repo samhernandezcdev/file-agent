@@ -746,6 +746,43 @@
       "title": "ManagedRootsRemoveParams",
       "type": "object"
     },
+    "PlanAttentionView": {
+      "description": "FA-017.1 \u00a718: an additive, presentation-owned aggregation over items\nthat share the same underlying blocker -- computed here so React never\nbranches on `reason_code` itself (which never appears on this DTO, or\nanywhere else on the wire).",
+      "properties": {
+        "affectedFilenames": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Affectedfilenames",
+          "type": "array"
+        },
+        "categoryLabel": {
+          "title": "Categorylabel",
+          "type": "string"
+        },
+        "destinationLabel": {
+          "title": "Destinationlabel",
+          "type": "string"
+        },
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
+        },
+        "variant": {
+          "const": "missing_destination_folder",
+          "title": "Variant",
+          "type": "string"
+        }
+      },
+      "required": [
+        "variant",
+        "categoryLabel",
+        "destinationLabel",
+        "message",
+        "affectedFilenames"
+      ],
+      "title": "PlanAttentionView",
+      "type": "object"
+    },
     "PlanCreateParams": {
       "properties": {
         "policyDecisionIds": {
@@ -889,6 +926,13 @@
     },
     "PlanView": {
       "properties": {
+        "attentions": {
+          "items": {
+            "$ref": "#/$defs/PlanAttentionView"
+          },
+          "title": "Attentions",
+          "type": "array"
+        },
         "id": {
           "format": "uuid",
           "title": "Id",
@@ -950,6 +994,7 @@
         "managedRootId",
         "rootDisplayPath",
         "items",
+        "attentions",
         "summary",
         "structuralProtectionNote"
       ],

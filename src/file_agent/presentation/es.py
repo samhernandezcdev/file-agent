@@ -43,7 +43,7 @@ from file_agent.structural_safety import StructuralProtection
 
 _PLAN_STATUS_LABEL: dict[PlanStatus, str] = {
     PlanStatus.READY: "Listo para organizar",
-    PlanStatus.REVIEW_REQUIRED: "Necesita tu aprobación",
+    PlanStatus.REVIEW_REQUIRED: "Necesita tu revisión",
     PlanStatus.CONFLICT: "No se puede mover todavía",
     PlanStatus.INVALID: "No pudimos confirmar su estado",
     PlanStatus.BLOCKED: "No se moverá por seguridad",
@@ -457,6 +457,26 @@ def protected_trees_summary_message(
         detail=_PROTECTED_TREE_FOUND_DETAIL,
         severity=Severity.INFO,
         suggested_action=SuggestedAction.NONE,
+    )
+
+
+def missing_destination_folder_message(
+    category_label: str, folder_name: str, affected_count: int
+) -> UserMessage:
+    """FA-017.1 §18: the aggregate, Python-composed copy for a
+    PlanAttentionView(variant="missing_destination_folder") entry -- one
+    message per distinct missing destination_path.parent, never per file."""
+    file_word = "archivo" if affected_count == 1 else "archivos"
+    detail = (
+        f"{affected_count} {file_word} están listos para clasificarse como "
+        f"{category_label}, pero falta:\n\n{folder_name}\n\n"
+        "Créala y vuelve a analizar esta carpeta."
+    )
+    return UserMessage(
+        title="Falta preparar esta carpeta",
+        detail=detail,
+        severity=Severity.ATTENTION,
+        suggested_action=SuggestedAction.REANALYZE,
     )
 
 

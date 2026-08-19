@@ -22,6 +22,7 @@ decision already is.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
@@ -54,6 +55,7 @@ from file_agent.application.managed_roots import (
 from file_agent.application.organization_plan import (
     OrganizationPlan,
     OrganizationPlanItem,
+    PlanReasonCode,
     PlanStatus,
 )
 from file_agent.domain import DestinationCategory, FileCategory
@@ -314,6 +316,65 @@ def plan_item_view(item: OrganizationPlanItem) -> PlanItemView:
     )
 
 
+class PlanAttentionView(ViewModel):
+    """FA-017.1 §18: an additive, presentation-owned aggregation over items
+    that share the same underlying blocker -- computed here so React never
+    branches on `reason_code` itself (which never appears on this DTO, or
+    anywhere else on the wire)."""
+
+    variant: Literal["missing_destination_folder"]
+    """Presentation-owned, closed, template-selection ONLY. Not derived
+    from, and not a proxy for, reason_code."""
+    category_label: str
+    """Matches PlanItemView.categoryLabel -- tells React which PlanGroup to
+    render this above. A pure lookup key, not a semantic field."""
+    destination_label: str
+    """The literal, real folder name the user must create (e.g.
+    "Documents") -- shown verbatim, like any other real filesystem name
+    already surfaced elsewhere. Not translated: it is data, not
+    vocabulary."""
+    message: UserMessageView
+    affected_filenames: tuple[str, ...]
+
+
+def _missing_destination_folder_attentions(
+    items: tuple[OrganizationPlanItem, ...],
+) -> tuple[PlanAttentionView, ...]:
+    """Groups CONFLICT items whose reason is DESTINATION_PARENT_MISSING by
+    their actual destination_path.parent -- not merely by reason code, so
+    two distinct missing folders (e.g. both Documents and Images absent)
+    produce two separate attention entries."""
+    groups: dict[str, list[OrganizationPlanItem]] = {}
+    for item in items:
+        if (
+            item.status is not PlanStatus.CONFLICT
+            or item.reason_code is not PlanReasonCode.DESTINATION_PARENT_MISSING
+            or item.destination_path is None
+        ):
+            continue
+        groups.setdefault(str(item.destination_path.parent), []).append(item)
+
+    attentions: list[PlanAttentionView] = []
+    for parent_path, group_items in groups.items():
+        first = group_items[0]
+        attentions.append(
+            PlanAttentionView(
+                variant="missing_destination_folder",
+                category_label=_file_category_label(first.category),
+                destination_label=Path(parent_path).name,
+                message=_message_view(
+                    es.missing_destination_folder_message(
+                        _file_category_label(first.category),
+                        Path(parent_path).name,
+                        len(group_items),
+                    )
+                ),
+                affected_filenames=tuple(i.filename for i in group_items),
+            )
+        )
+    return tuple(attentions)
+
+
 class PlanSummaryView(ViewModel):
     files_total: int
     ready: int
@@ -333,6 +394,10 @@ class PlanView(ViewModel):
     managed_root_id: UUID | None
     root_display_path: str | None
     items: tuple[PlanItemView, ...]
+    attentions: tuple[PlanAttentionView, ...]
+    """FA-017.1 §18: additive-only aggregation over `items` the planner
+    already produced -- computed here, never derived by React from
+    reason_code (which is never exposed on the wire)."""
     summary: PlanSummaryView
     structural_protection_note: str | None
 
@@ -345,6 +410,7 @@ def plan_view(plan: OrganizationPlan) -> PlanView:
         managed_root_id=plan.managed_root_id,
         root_display_path=str(plan.root_path) if plan.root_path is not None else None,
         items=tuple(plan_item_view(i) for i in plan.items),
+        attentions=_missing_destination_folder_attentions(plan.items),
         summary=PlanSummaryView(
             files_total=summary.files_total,
             ready=summary.ready,

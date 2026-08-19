@@ -38,6 +38,7 @@ VIEW_MODELS: tuple[type[BaseModel], ...] = (
     v.AnalysisFailureView,
     v.AnalysisResultView,
     v.PlanItemView,
+    v.PlanAttentionView,
     v.PlanSummaryView,
     v.PlanView,
     v.ReviewActionResultView,

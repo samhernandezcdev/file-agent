@@ -100,7 +100,7 @@ def test_lang_es_flag_renders_spanish_section_headings_and_reasons() -> None:
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert "No pudimos" in result.stdout or "Necesita tu aprobación" in result.stdout
+    assert "No pudimos" in result.stdout or "Necesita tu revisión" in result.stdout
     assert "CONFLICTS" not in result.stdout
 
 

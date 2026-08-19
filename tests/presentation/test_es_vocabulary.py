@@ -175,7 +175,7 @@ def test_designated_product_contract_strings() -> None:
     """A small, explicitly-called-out set of exact-string checks -- not the
     entire vocabulary table, to avoid brittleness on ordinary copy edits."""
     assert es.plan_status_label(PlanStatus.READY) == "Listo para organizar"
-    assert es.plan_status_label(PlanStatus.REVIEW_REQUIRED) == "Necesita tu aprobación"
+    assert es.plan_status_label(PlanStatus.REVIEW_REQUIRED) == "Necesita tu revisión"
     assert es.batch_item_status_label(BatchApplyItemStatus.APPLIED) == "Organizado"
     assert (
         es.rejection_reason_detail(None)

@@ -31,6 +31,7 @@ const PLAN_RESULT = {
     managedRootId: "root-1",
     rootDisplayPath: "C:/Descargas",
     structuralProtectionNote: null,
+    attentions: [],
     summary: {
       filesTotal: 2,
       ready: 1,
@@ -63,7 +64,7 @@ const PLAN_RESULT = {
         destinationDisplayPath: null,
         categoryLabel: "Imagen",
         status: "review_required",
-        title: "Necesita tu aprobación",
+        title: "Necesita tu revisión",
         detail: "Necesitamos tu aprobación antes de mover este archivo.",
         severity: "attention",
         selectable: false,
@@ -102,16 +103,20 @@ function mockInvokeByCommand() {
   });
 }
 
-function renderScreen(onApplied = vi.fn()) {
+function renderScreen(onApplyCompleted = vi.fn()) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <PlanScreen managedRootId="root-1" onApplied={onApplied} />
+      <PlanScreen
+        managedRootId="root-1"
+        onApplyCompleted={onApplyCompleted}
+        onApplyPendingChange={vi.fn()}
+      />
     </QueryClientProvider>,
   );
-  return { onApplied };
+  return { onApplyCompleted };
 }
 
 describe("PlanScreen", () => {
@@ -125,8 +130,11 @@ describe("PlanScreen", () => {
     renderScreen();
     await screen.findByText("invoice.pdf");
 
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes).toHaveLength(1);
+    // The master "Seleccionar todos los listos" checkbox plus exactly one
+    // per-item checkbox (the READY item only -- the review item gets
+    // Aprobar/Omitir instead).
+    expect(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" })).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Seleccionar photo.jpg" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Aprobar" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Omitir" })).toBeInTheDocument();
   });
@@ -135,24 +143,24 @@ describe("PlanScreen", () => {
     renderScreen();
     await screen.findByText("invoice.pdf");
 
-    const organizeButton = screen.getByRole("button", { name: "Organizar" });
+    const organizeButton = screen.getByRole("button", { name: "Organizar 0 archivos" });
     expect(organizeButton).toBeDisabled();
 
-    await userEvent.click(screen.getByRole("checkbox"));
-    expect(organizeButton).not.toBeDisabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" }));
+    expect(screen.getByRole("button", { name: "Organizar 1 archivo" })).not.toBeDisabled();
   });
 
   it("disables 'Organizar' synchronously on click, so a double-click cannot issue two batches", async () => {
-    const onApplied = vi.fn();
-    renderScreen(onApplied);
+    const onApplyCompleted = vi.fn();
+    renderScreen(onApplyCompleted);
     await screen.findByText("invoice.pdf");
-    await userEvent.click(screen.getByRole("checkbox"));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" }));
 
-    const organizeButton = screen.getByRole("button", { name: "Organizar" });
+    const organizeButton = screen.getByRole("button", { name: "Organizar 1 archivo" });
     await userEvent.click(organizeButton);
     // Immediately after the first click completes, the button must
     // already be disabled -- selection was cleared synchronously.
-    expect(organizeButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Organizar 0 archivos" })).toBeDisabled();
 
     await waitFor(() => {
       const applyCalls = vi
@@ -161,6 +169,12 @@ describe("PlanScreen", () => {
           ([, args]) => (args as { command?: string })?.command === "apply.items",
         );
       expect(applyCalls).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(onApplyCompleted).toHaveBeenCalledWith(
+        "root-1",
+        expect.objectContaining({ outcome: "ok" }),
+      );
     });
   });
 });

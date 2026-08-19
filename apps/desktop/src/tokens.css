@@ -1,0 +1,131 @@
+/**
+ * FA-017.1 design-token system (§9). Two layers:
+ *
+ *   Layer 1 -- raw palette: a numbered scale per hue. Never referenced
+ *   outside this file.
+ *
+ *   Layer 2 -- semantic tokens: the product's actual vocabulary
+ *   ("surface", "danger", "conflict", ...), each assigned from layer 1.
+ *   Every component consumes layer 2 only -- never a raw Tailwind palette
+ *   class (bg-blue-600, text-gray-700) anywhere in component code.
+ *
+ * Placeholder neutral values only -- functional, not final brand (final
+ * colors are out of scope for FA-017.1). A future rebrand touches only
+ * this file.
+ *
+ * Light mode only ships in FA-017.1. This two-layer structure is what
+ * makes a future dark mode a values-only addition (a
+ * :root[data-theme="dark"] block redefining layer-2 tokens) -- no dark
+ * values are chosen or shipped now.
+ */
+
+:root {
+  /* --- Layer 1: raw palette --------------------------------------- */
+  --fa-blue-50: #eff6ff;
+  --fa-blue-100: #dbeafe;
+  --fa-blue-200: #bfdbfe;
+  --fa-blue-500: #3b82f6;
+  --fa-blue-600: #2b6cb0;
+  --fa-blue-700: #1d4e89;
+  --fa-blue-900: #1e3a5f;
+
+  --fa-green-50: #f0fdf4;
+  --fa-green-100: #dcfce7;
+  --fa-green-500: #22a559;
+  --fa-green-600: #178a48;
+  --fa-green-700: #0f6e38;
+
+  --fa-amber-50: #fffbeb;
+  --fa-amber-100: #fef3c7;
+  --fa-amber-500: #d69e2e;
+  --fa-amber-600: #b7791f;
+  --fa-amber-700: #92600f;
+
+  --fa-red-50: #fef2f2;
+  --fa-red-100: #fee2e2;
+  --fa-red-500: #e53e3e;
+  --fa-red-600: #c53030;
+  --fa-red-700: #9b2323;
+
+  --fa-neutral-0: #ffffff;
+  --fa-neutral-50: #f8f9fa;
+  --fa-neutral-100: #f1f3f5;
+  --fa-neutral-200: #e5e8eb;
+  --fa-neutral-300: #d3d7dc;
+  --fa-neutral-400: #a6acb3;
+  --fa-neutral-500: #7c828a;
+  --fa-neutral-600: #565c64;
+  --fa-neutral-700: #3a3f45;
+  --fa-neutral-800: #24272b;
+  --fa-neutral-900: #131517;
+
+  /* --- Layer 2: semantic tokens ------------------------------------ */
+  --fa-background: var(--fa-neutral-50);
+  --fa-surface: var(--fa-neutral-0);
+  --fa-surface-muted: var(--fa-neutral-100);
+  --fa-surface-elevated: var(--fa-neutral-0);
+
+  --fa-foreground: var(--fa-neutral-900);
+  --fa-foreground-muted: var(--fa-neutral-600);
+  --fa-foreground-subtle: var(--fa-neutral-500);
+
+  --fa-primary: var(--fa-blue-600);
+  --fa-primary-hover: var(--fa-blue-700);
+  --fa-primary-foreground: var(--fa-neutral-0);
+
+  --fa-success: var(--fa-green-600);
+  --fa-warning: var(--fa-amber-600);
+  --fa-danger: var(--fa-red-600);
+  --fa-danger-subtle: var(--fa-red-50);
+  --fa-info: var(--fa-blue-600);
+
+  --fa-border: var(--fa-neutral-200);
+  --fa-border-strong: var(--fa-neutral-400);
+  --fa-focus-ring: var(--fa-blue-600);
+
+  --fa-selection: var(--fa-blue-50);
+  --fa-selection-hover: var(--fa-blue-100);
+
+  --fa-ready: var(--fa-green-600);
+  --fa-review: var(--fa-amber-600);
+  --fa-conflict: var(--fa-amber-600);
+  --fa-protected: var(--fa-neutral-500);
+}
+
+/* Maps semantic tokens into Tailwind utilities (bg-surface,
+   text-foreground-muted, border-conflict, ...) via v4's CSS-first
+   @theme -- see main.css for the @import "tailwindcss" entry point. */
+@theme inline {
+  --color-background: var(--fa-background);
+  --color-surface: var(--fa-surface);
+  --color-surface-muted: var(--fa-surface-muted);
+  --color-surface-elevated: var(--fa-surface-elevated);
+
+  --color-foreground: var(--fa-foreground);
+  --color-foreground-muted: var(--fa-foreground-muted);
+  --color-foreground-subtle: var(--fa-foreground-subtle);
+
+  --color-primary: var(--fa-primary);
+  --color-primary-hover: var(--fa-primary-hover);
+  --color-primary-foreground: var(--fa-primary-foreground);
+
+  --color-success: var(--fa-success);
+  --color-warning: var(--fa-warning);
+  --color-danger: var(--fa-danger);
+  --color-danger-subtle: var(--fa-danger-subtle);
+  --color-info: var(--fa-info);
+
+  --color-border: var(--fa-border);
+  --color-border-strong: var(--fa-border-strong);
+  --color-focus-ring: var(--fa-focus-ring);
+
+  --color-selection: var(--fa-selection);
+  --color-selection-hover: var(--fa-selection-hover);
+
+  --color-ready: var(--fa-ready);
+  --color-review: var(--fa-review);
+  --color-conflict: var(--fa-conflict);
+  --color-protected: var(--fa-protected);
+
+  --font-sans: "Segoe UI Variable", "Segoe UI", -apple-system, system-ui, sans-serif;
+}

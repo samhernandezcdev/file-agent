@@ -1,3 +1,8 @@
+import type {
+  BatchApplyResultView,
+  ManagedRootUnavailableResultView,
+  UserMessageView,
+} from "@file-agent/desktop-types";
 import type { RustOutcome } from "../desktop";
 
 export type NonOkGuidance = { title: string; detail: string };
@@ -38,5 +43,61 @@ export function guidanceForOutcome(
         title: "FileAgent no está disponible en este momento.",
         detail: outcome.message,
       };
+  }
+}
+
+/** FA-017.1 §19a: the three ways an apply completion is ever presented.
+ * `RESULT` and `KNOWN_NO_RESULT` together are the "ordinary" subset subject
+ * to the completion inbox's FIFO cap; `UNKNOWN` is never bounded. */
+export type CompletionPresentation =
+  | { kind: "result"; result: BatchApplyResultView }
+  | { kind: "known_no_result"; message: UserMessageView }
+  | { kind: "unknown" };
+
+function assertNever(x: never): never {
+  throw new Error(`completionPresentation: unhandled outcome variant: ${JSON.stringify(x)}`);
+}
+
+/** Classifies an ALREADY FINAL apply RustOutcome into its presentation
+ * class. Never inspects STARTED, retry-safety, command name, or any
+ * transport/process state -- all of that was already resolved by Rust
+ * before this function runs (see FA-017's sidecar.rs RequestOutcome
+ * construction). Exhaustive switch + assertNever so a future RustOutcome
+ * (or nested BatchApplyResultView/ManagedRootUnavailableResultView union
+ * member) is a compile error here, never a silent KNOWN_NO_RESULT. */
+export function completionPresentation(
+  outcome: RustOutcome<BatchApplyResultView | ManagedRootUnavailableResultView>,
+): CompletionPresentation {
+  switch (outcome.outcome) {
+    case "ok": {
+      const result = outcome.result;
+      switch (result.outcome) {
+        case "ok":
+          return { kind: "result", result };
+        case "managed_root_unavailable":
+          // DTO already carries its own composed message; render verbatim.
+          return { kind: "known_no_result", message: result.message };
+        default:
+          return assertNever(result);
+      }
+    }
+    case "unknown_mutation_outcome":
+      return { kind: "unknown" };
+    case "product_error":
+    case "retryable_interrupted":
+    case "transport_unavailable": {
+      const guidance = guidanceForOutcome(outcome, "apply")!; // never null here
+      return {
+        kind: "known_no_result",
+        message: {
+          title: guidance.title,
+          detail: guidance.detail,
+          severity: "error",
+          suggestedAction: "none",
+        },
+      };
+    }
+    default:
+      return assertNever(outcome);
   }
 }

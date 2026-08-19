@@ -43,15 +43,26 @@ export function useReviewMutations(policyDecisionIds: readonly string[]) {
   return { approve, skip };
 }
 
-export function useApplyItemsMutation() {
+/** `onCompleted` is invoked from this hook's OWN onSuccess (stored
+ * directly on the underlying Mutation's options, and updated on every
+ * render via TanStack Query's setOptions) -- not from a per-call
+ * `mutate(variables, { onSuccess })` callback, which is stored on the
+ * MutationObserver instead and is empirically NOT invoked once the
+ * observer's owning component (PlanScreen) has unmounted. This is the one
+ * mechanism that reliably survives navigating away before an apply
+ * resolves (FA-017.1 §19a). */
+export function useApplyItemsMutation(
+  onCompleted: (outcome: Awaited<ReturnType<typeof desktop.apply.items>>) => void,
+) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (policyDecisionIds: string[]) => desktop.apply.items(policyDecisionIds),
-    onSuccess: () => {
+    onSuccess: (outcome) => {
       // Managed roots' status/history can change after an apply -- refetch
       // rather than assume anything locally.
       queryClient.invalidateQueries({ queryKey: ["managed-roots"] });
       queryClient.invalidateQueries({ queryKey: ["history"] });
+      onCompleted(outcome);
     },
   });
 }

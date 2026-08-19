@@ -59,7 +59,7 @@ describe("FA-017 golden path", () => {
         path;
     }, fixtureRoot);
 
-    const addButton = await browser.$("button=Agregar carpeta");
+    const addButton = await browser.$("button=Elegir una carpeta");
     await addButton.click();
 
     // Match on the "Analizar" action appearing rather than the exact
@@ -92,12 +92,16 @@ describe("FA-017 golden path", () => {
   });
 
   it("selects the eligible item and organizes it", async () => {
-    const checkbox = await browser.$('input[type="checkbox"]');
-    await checkbox.waitForDisplayed({ timeout: 15000 });
-    await checkbox.click();
+    // Exercises the "Seleccionar todos los listos" bulk-select control
+    // (FA-017.1 §16) rather than a single first-match checkbox -- avoids
+    // depending on exactly how many items became selectable after the
+    // approval above, and still drives the same real backend mutation.
+    const selectAll = await browser.$('[aria-label="Seleccionar todos los listos"]');
+    await selectAll.waitForDisplayed({ timeout: 15000 });
+    await selectAll.click();
 
-    const organizeButton = await browser.$("button=Organizar");
-    expect(await organizeButton.isEnabled()).toBe(true);
+    const organizeButton = await browser.$('button*=Organizar');
+    await browser.waitUntil(async () => organizeButton.isEnabled(), { timeout: 5000 });
     await organizeButton.click();
 
     const resultsHeading = await browser.$("#apply-results-heading");
@@ -105,7 +109,7 @@ describe("FA-017 golden path", () => {
   });
 
   it("opens history and shows the completed batch", async () => {
-    const viewHistoryButton = await browser.$("button=Ver en historial");
+    const viewHistoryButton = await browser.$("button=Ver historial");
     await viewHistoryButton.click();
 
     const historyHeading = await browser.$("#history-heading");
@@ -125,9 +129,9 @@ describe("FA-017 golden path", () => {
     await confirmButton.waitForDisplayed({ timeout: 15000 });
     await confirmButton.click();
 
-    // The confirmation controls disappear once the decision is made --
-    // proving the UI reacted to the real backend outcome, not a
-    // locally-fabricated one.
+    // The confirmation control disappears once the decision is made (the
+    // AlertDialog closes on confirm) -- unchanged assertion from before
+    // the Radix AlertDialog migration.
     await confirmButton.waitForExist({ reverse: true, timeout: 15000 });
   });
 });
