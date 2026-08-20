@@ -2,6 +2,7 @@ import type {
   BatchApplyResultView,
   DestinationSetupResultView,
   ManagedRootUnavailableResultView,
+  UndoResultView,
   UserMessageView,
 } from "@file-agent/desktop-types";
 import type { RustOutcome } from "../desktop";
@@ -125,6 +126,67 @@ export function completionPresentation(
     }
     default:
       return assertNever(outcome);
+  }
+}
+
+/** FA-017.5 Part 26: Undo's own retained-completion outcome shape.
+ * `transactionId` is carried alongside the RustOutcome itself (not
+ * recoverable from every outcome variant -- e.g. unknown_mutation_outcome
+ * carries no UndoResultView at all) since the notice/correlation logic
+ * needs it regardless of which variant resolved. Known only at the
+ * mutate()-call site, where the transaction being undone is always
+ * already in scope. */
+export type UndoOutcome = {
+  transactionId: string;
+  result: RustOutcome<UndoResultView>;
+};
+
+/** FA-017.5 Part 28: the Undo analog of CompletionPresentation/
+ * DestinationSetupCompletionPresentation -- its own, separate type and
+ * function (never sharing a body with the other two, same "SHARED FIFO
+ * MECHANICS != SHARED PRODUCT SEMANTICS" principle). Deliberately
+ * collapses UndoResultView's own succeeded/rejected/failed status into
+ * "succeeded"/"rejected" HERE (the one designated place RustOutcome/DTO
+ * shapes become presentation classes) so every consumer -- including
+ * files the no-raw-status-branching guard covers -- only ever branches on
+ * this presentation `kind`, never on a raw `status` string. */
+export type UndoCompletionPresentation =
+  | { kind: "succeeded"; result: UndoResultView }
+  | { kind: "rejected"; message: UserMessageView }
+  | { kind: "unknown" };
+
+export function undoCompletionPresentation(
+  outcome: UndoOutcome,
+): UndoCompletionPresentation {
+  const result = outcome.result;
+  switch (result.outcome) {
+    case "ok": {
+      const undo = result.result;
+      if (undo.status === "succeeded") {
+        return { kind: "succeeded", result: undo };
+      }
+      // rejected or failed -- undo_result_view (backend) always populates
+      // `message` for both non-succeeded statuses, never for succeeded.
+      return { kind: "rejected", message: undo.message as UserMessageView };
+    }
+    case "unknown_mutation_outcome":
+      return { kind: "unknown" };
+    case "product_error":
+    case "retryable_interrupted":
+    case "transport_unavailable": {
+      const guidance = guidanceForOutcome(result, "undo_restore")!; // never null here
+      return {
+        kind: "rejected",
+        message: {
+          title: guidance.title,
+          detail: guidance.detail,
+          severity: "error",
+          suggestedAction: "none",
+        },
+      };
+    }
+    default:
+      return assertNever(result);
   }
 }
 

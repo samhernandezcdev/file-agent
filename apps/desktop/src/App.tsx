@@ -3,11 +3,13 @@ import { Folder } from "lucide-react";
 import type { BatchApplyResultView, ManagedRootUnavailableResultView } from "@file-agent/desktop-types";
 import { CompletionNotice } from "./components/ui/CompletionNotice";
 import { DestinationSetupCompletionNotice } from "./components/ui/DestinationSetupCompletionNotice";
+import { UndoCompletionNotice } from "./components/ui/UndoCompletionNotice";
 import { StepIndicator, type StepState } from "./components/ui/StepIndicator";
 import { Tooltip } from "./components/ui/Tooltip";
 import { Sidebar, type SidebarDestination } from "./components/Sidebar";
 import type { RustOutcome } from "./desktop";
 import { ApplyResultsScreen } from "./features/apply/ApplyResultsScreen";
+import { HistoryDetailScreen } from "./features/history/HistoryDetailScreen";
 import { HistoryScreen } from "./features/history/HistoryScreen";
 import { ManagedRootsScreen } from "./features/managed-roots/ManagedRootsScreen";
 import { useManagedRootsQuery } from "./features/managed-roots/useManagedRoots";
@@ -16,7 +18,9 @@ import { appendCompletion, removeCompletion, type RetainedCompletion } from "./l
 import {
   completionPresentation,
   destinationSetupCompletionPresentation,
+  undoCompletionPresentation,
   type DestinationSetupOutcome,
+  type UndoOutcome,
 } from "./lib/outcomeMessages";
 import "./App.css";
 
@@ -24,7 +28,8 @@ type Screen =
   | { name: "roots" }
   | { name: "plan"; managedRootId: string }
   | { name: "results"; result: BatchApplyResultView }
-  | { name: "history" };
+  | { name: "history" }
+  | { name: "historyDetail"; batchId: string };
 
 type ApplyOutcome = RustOutcome<BatchApplyResultView | ManagedRootUnavailableResultView>;
 
@@ -48,6 +53,9 @@ function App() {
   >([]);
   const [retainedDestinationSetupCompletions, setRetainedDestinationSetupCompletions] = useState<
     RetainedCompletion<DestinationSetupOutcome>[]
+  >([]);
+  const [retainedUndoCompletions, setRetainedUndoCompletions] = useState<
+    RetainedCompletion<UndoOutcome>[]
   >([]);
   const [applying, setApplying] = useState(false);
   const rootsQuery = useManagedRootsQuery();
@@ -83,7 +91,7 @@ function App() {
     setRetainedCompletions((prev) =>
       appendCompletion(
         prev,
-        { id: crypto.randomUUID(), managedRootId, outcome, receivedAt: Date.now() },
+        { id: crypto.randomUUID(), correlationId: managedRootId, outcome, receivedAt: Date.now() },
         (entry) => completionPresentation(entry.outcome).kind !== "unknown",
       ),
     );
@@ -105,13 +113,34 @@ function App() {
       setRetainedDestinationSetupCompletions((prev) =>
         appendCompletion(
           prev,
-          { id: crypto.randomUUID(), managedRootId, outcome, receivedAt: Date.now() },
+          { id: crypto.randomUUID(), correlationId: managedRootId, outcome, receivedAt: Date.now() },
           (entry) => destinationSetupCompletionPresentation(entry.outcome).kind !== "unknown",
         ),
       );
     },
     [],
   );
+
+  // FA-017.5 Part 9/26: Undo can only ever originate from
+  // historyDetail(batchId) (Major 1's own removal of any compact-card
+  // shortcut) -- so the "still there?" check is exactly
+  // screen.name==="historyDetail" && screen.batchId===batchId, never a
+  // managedRootId comparison. The "still there" branch is a no-op (like
+  // destination-setup's own): HistoryDetailScreen's own query invalidation
+  // + refetch already updates the row in place.
+  const onUndoCompleted = useCallback((batchId: string, outcome: UndoOutcome) => {
+    const current = screenRef.current;
+    if (current.name === "historyDetail" && current.batchId === batchId) {
+      return;
+    }
+    setRetainedUndoCompletions((prev) =>
+      appendCompletion(
+        prev,
+        { id: crypto.randomUUID(), correlationId: batchId, outcome, receivedAt: Date.now() },
+        (entry) => undoCompletionPresentation(entry.outcome).kind !== "unknown",
+      ),
+    );
+  }, []);
 
   function openCompletion(entry: RetainedCompletion<ApplyOutcome>) {
     const presentation = completionPresentation(entry.outcome);
@@ -137,11 +166,24 @@ function App() {
   // here triggers analysis.run/plan.create/destination_setup.prepare.
   function openDestinationSetupCompletion(entry: RetainedCompletion<DestinationSetupOutcome>) {
     setRetainedDestinationSetupCompletions((prev) => removeCompletion(prev, entry.id));
-    setScreen({ name: "plan", managedRootId: entry.managedRootId });
+    setScreen({ name: "plan", managedRootId: entry.correlationId });
   }
 
   function dismissDestinationSetupCompletion(id: string) {
     setRetainedDestinationSetupCompletions((prev) => removeCompletion(prev, id));
+  }
+
+  // FA-017.5 Part 27: pure navigation to the exact originating batch's
+  // detail screen -- never itself retries/starts an Undo, never infers
+  // success/failure. HistoryDetailScreen's own authoritative refetch is
+  // what shows the truthful current state once the user arrives.
+  function openUndoCompletion(entry: RetainedCompletion<UndoOutcome>) {
+    setRetainedUndoCompletions((prev) => removeCompletion(prev, entry.id));
+    setScreen({ name: "historyDetail", batchId: entry.correlationId });
+  }
+
+  function dismissUndoCompletion(id: string) {
+    setRetainedUndoCompletions((prev) => removeCompletion(prev, id));
   }
 
   function navigate(destination: SidebarDestination) {
@@ -164,12 +206,14 @@ function App() {
   const mergedNotices: (
     | { kind: "apply"; entry: RetainedCompletion<ApplyOutcome> }
     | { kind: "destinationSetup"; entry: RetainedCompletion<DestinationSetupOutcome> }
+    | { kind: "undo"; entry: RetainedCompletion<UndoOutcome> }
   )[] = [
     ...retainedCompletions.map((entry) => ({ kind: "apply" as const, entry })),
     ...retainedDestinationSetupCompletions.map((entry) => ({
       kind: "destinationSetup" as const,
       entry,
     })),
+    ...retainedUndoCompletions.map((entry) => ({ kind: "undo" as const, entry })),
   ].sort((a, b) => a.entry.receivedAt - b.entry.receivedAt);
 
   // FA-017.4 Part 14: direct same-root reanalysis from Results, reusing
@@ -190,28 +234,44 @@ function App() {
 
   return (
     <div className="flex min-h-screen bg-background">
-      <Sidebar active={screen.name === "history" ? "historial" : "carpetas"} onNavigate={navigate} />
+      <Sidebar
+        active={screen.name === "history" || screen.name === "historyDetail" ? "historial" : "carpetas"}
+        onNavigate={navigate}
+      />
 
       <main className="flex-1 overflow-y-auto px-8 py-6">
         {mergedNotices.length > 0 ? (
           <div className="mb-4 flex flex-col gap-2" aria-label="Avisos de organización">
-            {mergedNotices.map((notice) =>
-              notice.kind === "apply" ? (
-                <CompletionNotice
+            {mergedNotices.map((notice) => {
+              if (notice.kind === "apply") {
+                return (
+                  <CompletionNotice
+                    key={notice.entry.id}
+                    entry={notice.entry}
+                    onOpen={() => openCompletion(notice.entry)}
+                    onDismiss={() => dismissCompletion(notice.entry.id)}
+                  />
+                );
+              }
+              if (notice.kind === "destinationSetup") {
+                return (
+                  <DestinationSetupCompletionNotice
+                    key={notice.entry.id}
+                    entry={notice.entry}
+                    onOpen={() => openDestinationSetupCompletion(notice.entry)}
+                    onDismiss={() => dismissDestinationSetupCompletion(notice.entry.id)}
+                  />
+                );
+              }
+              return (
+                <UndoCompletionNotice
                   key={notice.entry.id}
                   entry={notice.entry}
-                  onOpen={() => openCompletion(notice.entry)}
-                  onDismiss={() => dismissCompletion(notice.entry.id)}
+                  onOpen={() => openUndoCompletion(notice.entry)}
+                  onDismiss={() => dismissUndoCompletion(notice.entry.id)}
                 />
-              ) : (
-                <DestinationSetupCompletionNotice
-                  key={notice.entry.id}
-                  entry={notice.entry}
-                  onOpen={() => openDestinationSetupCompletion(notice.entry)}
-                  onDismiss={() => dismissDestinationSetupCompletion(notice.entry.id)}
-                />
-              ),
-            )}
+              );
+            })}
           </div>
         ) : null}
 
@@ -260,7 +320,20 @@ function App() {
           />
         ) : null}
 
-        {screen.name === "history" ? <HistoryScreen /> : null}
+        {screen.name === "history" ? (
+          <HistoryScreen
+            onOpenBatch={(batchId) => setScreen({ name: "historyDetail", batchId })}
+            onChooseAnotherFolder={() => setScreen({ name: "roots" })}
+          />
+        ) : null}
+
+        {screen.name === "historyDetail" ? (
+          <HistoryDetailScreen
+            batchId={screen.batchId}
+            onBack={() => setScreen({ name: "history" })}
+            onUndoCompleted={onUndoCompleted}
+          />
+        ) : null}
       </main>
     </div>
   );

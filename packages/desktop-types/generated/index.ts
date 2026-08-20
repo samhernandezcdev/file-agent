@@ -65,6 +65,7 @@ export type Batchid1 = string;
 export type Completedat1 = string | null;
 export type Invalidcount = number;
 export type Items2 = BatchHistoryItemView[] | null;
+export type Alreadyundone = boolean;
 export type Destinationdisplaypath2 = string | null;
 export type Filename2 = string | null;
 export type Inputindex1 = number;
@@ -296,6 +297,7 @@ export interface BatchHistoryEntryView {
   notAppliedCount: Notappliedcount;
   outcome: Outcome2;
   processedCount: Processedcount;
+  recoveryMessage: UserMessageView | null;
   rowType: Rowtype;
   selectedCount: Selectedcount;
   skippedCount: Skippedcount;
@@ -304,6 +306,7 @@ export interface BatchHistoryEntryView {
   summaryMessage: UserMessageView;
 }
 export interface BatchHistoryItemView {
+  alreadyUndone: Alreadyundone;
   destinationDisplayPath: Destinationdisplaypath2;
   filename: Filename2;
   inputIndex: Inputindex1;

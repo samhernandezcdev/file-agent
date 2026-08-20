@@ -28,12 +28,12 @@ let counter = 0;
 function ordinaryEntry(): RetainedCompletion<ApplyOutcome> {
   counter += 1;
   const outcome: RustOutcome<BatchApplyResultView> = { outcome: "ok", result: RESULT };
-  return { id: `ordinary-${counter}`, managedRootId: "root-1", outcome, receivedAt: counter };
+  return { id: `ordinary-${counter}`, correlationId: "root-1", outcome, receivedAt: counter };
 }
 function unknownEntry(): RetainedCompletion<ApplyOutcome> {
   counter += 1;
   const outcome: RustOutcome<BatchApplyResultView> = { outcome: "unknown_mutation_outcome" };
-  return { id: `unknown-${counter}`, managedRootId: "root-1", outcome, receivedAt: counter };
+  return { id: `unknown-${counter}`, correlationId: "root-1", outcome, receivedAt: counter };
 }
 
 describe("completion inbox retention", () => {
@@ -115,14 +115,14 @@ describe("completion inbox retention", () => {
     for (let i = 0; i < MAX_ORDINARY_NOTICES; i += 1) {
       list = appendCompletion(
         list,
-        { id: `fake-${i}`, managedRootId: "root-1", outcome: { outcome: "ok" }, receivedAt: i },
+        { id: `fake-${i}`, correlationId: "root-1", outcome: { outcome: "ok" }, receivedAt: i },
         fakeIsOrdinary,
       );
     }
     expect(list).toHaveLength(MAX_ORDINARY_NOTICES);
     list = appendCompletion(
       list,
-      { id: "fake-extra", managedRootId: "root-1", outcome: { outcome: "ok" }, receivedAt: 99 },
+      { id: "fake-extra", correlationId: "root-1", outcome: { outcome: "ok" }, receivedAt: 99 },
       fakeIsOrdinary,
     );
     expect(list).toHaveLength(MAX_ORDINARY_NOTICES);
@@ -140,7 +140,7 @@ describe("completion inbox retention", () => {
     }
     otherList = appendCompletion(
       otherList,
-      { id: "other-1", managedRootId: "root-2", outcome: { outcome: "ok" }, receivedAt: 1 },
+      { id: "other-1", correlationId: "root-2", outcome: { outcome: "ok" }, receivedAt: 1 },
       fakeIsOrdinary,
     );
 

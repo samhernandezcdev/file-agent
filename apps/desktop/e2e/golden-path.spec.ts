@@ -176,27 +176,39 @@ describe("FA-017 golden path", () => {
     expect(resultsBodyText).not.toMatch(/\bapplied\b/);
   });
 
-  it("opens history and shows the completed batch with consumer vocabulary and file identity", async () => {
+  it("opens history and shows a compact operation card, then the completed batch detail with consumer vocabulary and file identity", async () => {
     const viewHistoryButton = await browser.$("button=Ver historial");
     await viewHistoryButton.click();
 
     const historyHeading = await browser.$("#history-heading");
     await historyHeading.waitForDisplayed({ timeout: 15000 });
 
-    const batchRow = await browser.$("li button");
-    await batchRow.waitForDisplayed({ timeout: 15000 });
-    await batchRow.click();
+    // FA-017.5: the main History list shows only the compact operation
+    // card -- no file rows, no Deshacer affordance at this level (SUMMARY
+    // NAVIGATION != FILESYSTEM MUTATION).
+    const listBodyText = await browser.execute(() => document.body.innerText);
+    expect(listBodyText).not.toContain("invoice.pdf");
+    const listDeshacerButtons = await browser.$$("button=Deshacer");
+    expect(listDeshacerButtons).toHaveLength(0);
 
-    // FA-017.3: History renders es.py's own composed message (never a raw
-    // status string) and, for a real transaction-linked item, the durably
-    // reconstructed filename/source/destination -- proving the
-    // BATCH_ITEM_RECORDED file_id round trip and the TransactionResult
-    // cross-verification both actually work end to end against the real
-    // sidecar and a real SQLite-backed store, not a mock.
+    const detailsButton = await browser.$("button=Ver detalles");
+    await detailsButton.waitForDisplayed({ timeout: 15000 });
+    await detailsButton.click();
+
+    const detailHeading = await browser.$("#history-detail-heading");
+    await detailHeading.waitForDisplayed({ timeout: 15000 });
+
+    // FA-017.3/FA-017.5: History renders es.py's own composed message
+    // (never a raw status string) and, for a real transaction-linked
+    // item, the durably reconstructed filename/source/destination --
+    // proving the BATCH_ITEM_RECORDED file_id round trip and the
+    // TransactionResult cross-verification both actually work end to end
+    // against the real sidecar and a real SQLite-backed store, not a
+    // mock.
     const detailBodyText = await browser.execute(() => document.body.innerText);
     expect(detailBodyText).toContain("invoice.pdf");
     expect(detailBodyText).toContain("Organizado");
-    expect(detailBodyText).toContain("Se movió de");
+    expect(detailBodyText).toContain("→");
     expect(detailBodyText).not.toContain("not_applied");
     expect(detailBodyText).not.toMatch(/\bapplied\b/);
 

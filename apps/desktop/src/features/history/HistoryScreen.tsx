@@ -1,86 +1,64 @@
-import { useState } from "react";
 import type { BatchHistoryEntryView } from "@file-agent/desktop-types";
-import { History, RotateCcw } from "lucide-react";
-import { AlertDialog } from "../../components/ui/AlertDialog";
+import { History } from "lucide-react";
 import { Banner } from "../../components/ui/Banner";
 import { Button } from "../../components/ui/Button";
+import { Card } from "../../components/ui/Card";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { formatHistoryDate } from "../../lib/formatDate";
-import { guidanceForOutcome } from "../../lib/outcomeMessages";
 import { useManagedRootsQuery } from "../managed-roots/useManagedRoots";
-import { useBatchDetailQuery, useRecentHistoryQuery, useUndoTransactionMutation } from "./useHistory";
+import { useRecentHistoryQuery } from "./useHistory";
 
-function BatchDetail({ batchId }: { batchId: string }) {
-  const detailQuery = useBatchDetailQuery(batchId);
-  const undoMutation = useUndoTransactionMutation();
-
-  if (detailQuery.isLoading) return <p role="status">Cargando…</p>;
-  if (detailQuery.data?.outcome !== "ok" || detailQuery.data.result.outcome !== "found") {
-    return <Banner severity="error" title="No pudimos mostrar los detalles de esta operación." />;
-  }
-
-  const entry = detailQuery.data.result;
-  const undoGuidance = undoMutation.data ? guidanceForOutcome(undoMutation.data, "undo_restore") : null;
-
+/** FA-017.5 Part 6/7/9: a compact, summary-only operation card -- SUMMARY
+ * FIRST, DETAIL ON DEMAND. Never renders file rows, full paths, per-file
+ * reasons, transaction ids, UUIDs, raw statuses, or any undo/recovery
+ * mutation trigger (SUMMARY NAVIGATION != FILESYSTEM MUTATION, Part 9) --
+ * "Ver detalles" is the sole action, always primary since nothing
+ * competes with it. Renders `recoveryMessage` opaquely: it never derives
+ * AVAILABLE/MIXED/FULLY_RECOVERED meaning itself (Part 31). */
+function HistoryOperationCard({
+  row,
+  rootName,
+  onOpenBatch,
+}: {
+  row: BatchHistoryEntryView;
+  rootName: string | undefined;
+  onOpenBatch: (batchId: string) => void;
+}) {
   return (
-    <div aria-label="Detalle de la operación" className="mt-3 border-t border-border pt-3">
-      <Banner
-        severity={entry.summaryMessage.severity as "info" | "attention" | "error"}
-        title={entry.summaryMessage.title}
-        detail={entry.summaryMessage.detail}
-      />
-      {undoGuidance ? (
-        <div className="mt-2">
-          <Banner severity="error" title={undoGuidance.title} detail={undoGuidance.detail} />
-        </div>
+    <Card className="flex flex-col gap-2">
+      <div className="flex items-start justify-between gap-3">
+        <span className="truncate text-base font-semibold text-foreground">
+          {rootName ?? "Operación"}
+        </span>
+        <span className="shrink-0 text-sm text-foreground-subtle">
+          {formatHistoryDate(row.startedAt)}
+        </span>
+      </div>
+      <div>
+        <p className="text-sm font-medium text-foreground">{row.summaryMessage.title}</p>
+        {row.summaryMessage.detail ? (
+          <p className="text-sm text-foreground-muted">{row.summaryMessage.detail}</p>
+        ) : null}
+      </div>
+      {row.recoveryMessage ? (
+        <p className="text-sm text-foreground-muted">{row.recoveryMessage.title}</p>
       ) : null}
-      <ul className="mt-2 flex flex-col gap-1">
-        {(entry.items ?? []).map((item) => (
-          <li key={item.policyDecisionId} className="flex flex-col gap-0.5 py-1 text-sm">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium text-foreground">
-                {item.filename ?? "No pudimos identificar este archivo."}
-              </span>
-              {item.undoAvailable && item.transactionId ? (
-                <AlertDialog
-                  trigger={<Button icon={<RotateCcw size={14} />}>Deshacer</Button>}
-                  title="¿Deshacer este cambio?"
-                  description="El archivo volverá a su carpeta original."
-                  cancelLabel="Cancelar"
-                  confirmLabel="Sí, deshacer"
-                  confirmVariant="danger"
-                  onConfirm={() => undoMutation.mutate(item.transactionId as string)}
-                />
-              ) : null}
-            </div>
-            <span className="text-foreground-muted">{item.message.title}</span>
-            <span className="text-xs text-foreground-subtle">{item.message.detail}</span>
-          </li>
-        ))}
-      </ul>
-    </div>
+      <div className="mt-1 flex justify-end">
+        <Button variant="primary" onClick={() => onOpenBatch(row.batchId)}>
+          Ver detalles
+        </Button>
+      </div>
+    </Card>
   );
 }
 
-function HistoryEntryRow({ row, rootName }: { row: BatchHistoryEntryView; rootName: string | undefined }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <li className="border-b border-border py-2">
-      <button
-        type="button"
-        onClick={() => setOpen((prev) => !prev)}
-        className="flex w-full flex-col items-start gap-0.5 text-left"
-      >
-        <span className="text-xs text-foreground-subtle">{formatHistoryDate(row.startedAt)}</span>
-        <span className="text-sm font-medium text-foreground">{row.summaryMessage.title}</span>
-        {rootName ? <span className="text-xs text-foreground-muted">{rootName}</span> : null}
-      </button>
-      {open ? <BatchDetail batchId={row.batchId} /> : null}
-    </li>
-  );
-}
-
-export function HistoryScreen() {
+export function HistoryScreen({
+  onOpenBatch,
+  onChooseAnotherFolder,
+}: {
+  onOpenBatch: (batchId: string) => void;
+  onChooseAnotherFolder: () => void;
+}) {
   const recentQuery = useRecentHistoryQuery();
   const rootsQuery = useManagedRootsQuery();
 
@@ -101,22 +79,33 @@ export function HistoryScreen() {
         Historial
       </h1>
       {rows.length === 0 ? (
-        <EmptyState icon={History} title="Todavía no organizaste ningún archivo" />
+        <EmptyState
+          icon={History}
+          title="Aún no hay actividad"
+          detail="Cuando organices archivos, podrás revisar aquí los cambios realizados."
+          action={
+            <Button variant="primary" onClick={onChooseAnotherFolder}>
+              Elegir otra carpeta
+            </Button>
+          }
+        />
       ) : (
-        <ul aria-label="Operaciones recientes" className="flex flex-col">
-          {rows.map((row) =>
-            row.rowType === "entry" ? (
-              <HistoryEntryRow
-                key={row.batchId}
-                row={row}
-                rootName={row.managedRootId ? rootNameById.get(row.managedRootId) : undefined}
-              />
-            ) : (
-              <li key={row.batchId} className="border-b border-border py-2">
-                <Banner severity="error" title={row.message.title} detail={row.message.detail} />
-              </li>
-            ),
-          )}
+        <ul aria-label="Operaciones recientes" className="flex flex-col gap-3">
+          {rows.map((row) => (
+            <li key={row.batchId}>
+              {row.rowType === "entry" ? (
+                <HistoryOperationCard
+                  row={row}
+                  rootName={row.managedRootId ? rootNameById.get(row.managedRootId) : undefined}
+                  onOpenBatch={onOpenBatch}
+                />
+              ) : (
+                <Card>
+                  <Banner severity="error" title={row.message.title} detail={row.message.detail} />
+                </Card>
+              )}
+            </li>
+          ))}
         </ul>
       )}
     </section>

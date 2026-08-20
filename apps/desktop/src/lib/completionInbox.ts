@@ -12,10 +12,17 @@
  * BatchApplyResultView, DestinationSetupResultView, or any other DTO --
  * callers supply an `isOrdinary` classifier (e.g.
  * `completionPresentation`/`destinationSetupCompletionPresentation`,
- * both in outcomeMessages.ts) instead. */
+ * both in outcomeMessages.ts) instead.
+ *
+ * FA-017.5: `correlationId` (renamed from `managedRootId` -- a pure,
+ * behavior-preserving rename, no logic change) holds whatever scope key a
+ * given mutation kind's "still there?" check needs: a managedRootId for
+ * apply/destination-setup notices, a batchId for Undo notices. This
+ * module never reads or interprets the value itself -- it is opaque
+ * caller data, exactly like `outcome`. */
 export type RetainedCompletion<TOutcome> = {
   id: string;
-  managedRootId: string;
+  correlationId: string;
   outcome: TOutcome;
   receivedAt: number;
 };

@@ -5,6 +5,7 @@ codebase's rejection vocabularies define, plus for genuinely unknown/future
 codes; no raw enum name or forbidden jargon term ever appears in rendered
 copy."""
 
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ from file_agent.application.dto import (
     ApplicationRejectionReason,
     BatchApplyItemResult,
     BatchApplyItemStatus,
+    BatchStatus,
 )
 from file_agent.application.errors import (
     AppDataManagedRootError,
@@ -23,13 +25,17 @@ from file_agent.application.errors import (
     SystemDirectoryManagedRootError,
     UserProfileManagedRootError,
 )
-from file_agent.application.history import BatchHistoryItem
+from file_agent.application.history import (
+    BatchHistoryEntry,
+    BatchHistoryItem,
+    BatchRecoveryState,
+)
 from file_agent.application.managed_roots import (
     ManagedRootLookupStatus,
     ManagedRootUnavailable,
 )
 from file_agent.application.organization_plan import PlanReasonCode, PlanStatus
-from file_agent.domain import RejectionCode
+from file_agent.domain import RecoveryRejectionCode, RejectionCode
 from file_agent.presentation import es
 
 FORBIDDEN_JARGON = (
@@ -235,6 +241,7 @@ def _all_rendered_strings() -> list[str]:
                 source_path=Path("C:/sandbox/report.pdf"),
                 destination_path=Path("C:/sandbox/Documents/report.pdf"),
                 undo_available=False,
+                already_undone=False,
             )
             history_message = es.history_item_message(history_item)
             strings.append(history_message.title)
@@ -335,3 +342,121 @@ def test_designated_product_contract_strings() -> None:
         es.rejection_reason_detail(None)
         == "No pudimos completar esta acción de forma segura."
     )
+
+
+# --- FA-017.5: recovery-specific rejection copy -----------------------------
+
+
+def test_recovery_rejection_detail_is_total_never_raises_never_empty() -> None:
+    for member in RecoveryRejectionCode:
+        detail = es.recovery_rejection_detail(member.value)
+        assert detail
+    assert es.recovery_rejection_detail(None)
+    assert es.recovery_rejection_detail("totally_unrecognized_future_recovery_code")
+
+
+def test_recovery_rejection_detail_covers_the_exclusive_undo_restore_application_reasons() -> (
+    None
+):
+    """The six ApplicationRejectionReason values reachable only from
+    undo_transaction/restore_capture (Design Round 2 §11's collision
+    analysis) still resolve to a non-empty, non-fallback-required detail
+    via the recovery-only surface."""
+    for code in (
+        "transaction_not_found",
+        "ambiguous_transaction_history",
+        "requested_without_terminal",
+        "original_transaction_not_succeeded",
+        "capture_not_found",
+        "ambiguous_capture_history",
+    ):
+        assert es.recovery_rejection_detail(code)
+
+
+def test_basename_mismatch_collision_is_isolated_recovery_copy_never_leaks_into_apply() -> (
+    None
+):
+    """FA-017.5 Part 24: RecoveryRejectionCode.BASENAME_MISMATCH and
+    RejectionCode.BASENAME_MISMATCH share the literal string
+    "basename_mismatch" but must render DIFFERENT copy in their own
+    contexts -- recovery gets a specific, truthful message; the existing
+    apply-path behavior (deliberately unmapped, generic fallback) must be
+    completely unchanged by the new recovery-only table's existence."""
+    recovery_detail = es.recovery_rejection_detail(
+        RecoveryRejectionCode.BASENAME_MISMATCH.value
+    )
+    apply_detail = es.rejection_reason_detail(RejectionCode.BASENAME_MISMATCH.value)
+
+    assert recovery_detail == (
+        "No pudimos confirmar la identidad de este archivo de forma segura."
+    )
+    # Unchanged, pre-existing apply-path behavior: "basename_mismatch" is
+    # deliberately absent from the shared _REASON_DETAIL table, so it still
+    # falls back to the generic fallback -- proving the new recovery-only
+    # table never leaked into the shared one.
+    assert apply_detail == es.rejection_reason_detail(None)
+    assert recovery_detail != apply_detail
+
+
+def test_recovery_rejection_detail_falls_through_to_the_shared_table_for_context_neutral_codes() -> (
+    None
+):
+    """malformed_event_payload is genuinely, safely shared (pre-existing,
+    context-neutral copy) -- the recovery-only surface must still resolve
+    it identically to the shared one, via fallthrough, not a duplicate
+    entry."""
+    assert es.recovery_rejection_detail(
+        "malformed_event_payload"
+    ) == es.rejection_reason_detail("malformed_event_payload")
+
+
+# --- FA-017.5: batch recovery-state presentation ----------------------------
+
+
+def _history_entry(
+    *, items: tuple[BatchHistoryItem, ...], recovery_state: BatchRecoveryState
+) -> BatchHistoryEntry:
+    return BatchHistoryEntry(
+        batch_id=uuid4(),
+        started_at=datetime.now(UTC),
+        completed_at=datetime.now(UTC),
+        status=BatchStatus.COMPLETED,
+        requested_policy_decision_ids=tuple(i.policy_decision_id for i in items),
+        managed_root_id=uuid4(),
+        selected_count=len(items),
+        applied_count=sum(1 for i in items if i.status is BatchApplyItemStatus.APPLIED),
+        not_applied_count=sum(
+            1 for i in items if i.status is BatchApplyItemStatus.NOT_APPLIED
+        ),
+        skipped_count=0,
+        invalid_count=0,
+        processed_count=len(items),
+        recovery_state=recovery_state,
+        items=items,
+    )
+
+
+def test_history_recovery_message_is_none_for_batch_recovery_state_none() -> None:
+    entry = _history_entry(items=(), recovery_state=BatchRecoveryState.NONE)
+    assert es.history_recovery_message(entry) is None
+
+
+def test_history_recovery_message_available() -> None:
+    entry = _history_entry(items=(), recovery_state=BatchRecoveryState.AVAILABLE)
+    message = es.history_recovery_message(entry)
+    assert message is not None
+    assert message.title == "Puedes deshacer cambios"
+
+
+def test_history_recovery_message_mixed() -> None:
+    entry = _history_entry(items=(), recovery_state=BatchRecoveryState.MIXED)
+    message = es.history_recovery_message(entry)
+    assert message is not None
+    assert message.title == "Algunos cambios ya se deshicieron"
+
+
+def test_history_recovery_message_fully_recovered() -> None:
+    entry = _history_entry(items=(), recovery_state=BatchRecoveryState.FULLY_RECOVERED)
+    message = es.history_recovery_message(entry)
+    assert message is not None
+    assert message.title == "Cambios deshechos"

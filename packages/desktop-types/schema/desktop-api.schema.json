@@ -521,6 +521,16 @@
           "title": "Processedcount",
           "type": "integer"
         },
+        "recoveryMessage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UserMessageView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "rowType": {
           "const": "entry",
           "title": "Rowtype",
@@ -566,13 +576,18 @@
         "processedCount",
         "managedRootId",
         "items",
-        "summaryMessage"
+        "summaryMessage",
+        "recoveryMessage"
       ],
       "title": "BatchHistoryEntryView",
       "type": "object"
     },
     "BatchHistoryItemView": {
       "properties": {
+        "alreadyUndone": {
+          "title": "Alreadyundone",
+          "type": "boolean"
+        },
         "destinationDisplayPath": {
           "anyOf": [
             {
@@ -660,6 +675,7 @@
         "sourceDisplayPath",
         "destinationDisplayPath",
         "undoAvailable",
+        "alreadyUndone",
         "message"
       ],
       "title": "BatchHistoryItemView",

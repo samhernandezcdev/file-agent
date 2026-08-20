@@ -14,7 +14,11 @@ from file_agent.application.dto import (
     BatchApplySummary,
     BatchStatus,
 )
-from file_agent.application.history import BatchHistoryEntry, UnavailableBatchHistoryRow
+from file_agent.application.history import (
+    BatchHistoryEntry,
+    BatchRecoveryState,
+    UnavailableBatchHistoryRow,
+)
 from file_agent.application.organization_plan import (
     OrganizationPlanItem,
     PlanReasonCode,
@@ -229,6 +233,7 @@ def test_history_summary_message_matches_batch_summary_shape() -> None:
         skipped_count=0,
         invalid_count=0,
         processed_count=2,
+        recovery_state=BatchRecoveryState.NONE,
         items=None,
     )
     message = es.history_summary_message(entry)

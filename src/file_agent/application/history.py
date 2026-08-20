@@ -21,6 +21,7 @@ UUID ordering.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from uuid import UUID
 
@@ -64,6 +65,29 @@ class BatchHistoryItem:
     "offering Deshacer is warranted by durable evidence," never "attempting
     it will succeed" -- RecoveryEngine's own live preconditions are
     unchanged and remain the actual enforcement boundary."""
+    already_undone: bool
+    """FA-017.5. Durable evidence only -- true iff transaction_id resolves
+    to a SUCCEEDED TransactionResult AND a validated RECOVERY_SUCCEEDED
+    event DOES exist for it (the exact complement of undo_available for a
+    SUCCEEDED transaction -- see queries.find_successful_recoveries).
+    Ambiguous/unparseable recovery evidence is never promoted to True here
+    (find_successful_recoveries silently excludes it, leaving
+    undo_available True instead -- fails closed toward "still offerable,"
+    never toward "already handled"). False for every item that never had a
+    SUCCEEDED transaction (no transaction_id, or REJECTED/FAILED)."""
+
+
+class BatchRecoveryState(str, Enum):
+    """FA-017.5. A batch-level aggregate over every item's own durable
+    undo_available/already_undone facts -- never a new evidence source, and
+    never itself persisted. See _batch_recovery_state's docstring for the
+    proof that FULLY_RECOVERED is reachable only with complete positive
+    recovery evidence, never merely from the absence of undo_available."""
+
+    NONE = "none"
+    AVAILABLE = "available"
+    MIXED = "mixed"
+    FULLY_RECOVERED = "fully_recovered"
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +109,10 @@ class BatchHistoryEntry:
     skipped_count: int
     invalid_count: int
     processed_count: int
+    recovery_state: BatchRecoveryState
+    """FA-017.5. Computed unconditionally (including for INCOMPLETE
+    batches) from whatever items were durably recorded -- see
+    _batch_recovery_state."""
     items: tuple[BatchHistoryItem, ...] | None
     """None unless include_items=True was requested."""
 
@@ -286,6 +314,42 @@ def _count_statuses(items: Sequence[BatchHistoryItem]) -> dict[str, int]:
     return counts
 
 
+def _batch_recovery_state(
+    items: Sequence[BatchHistoryItem],
+) -> BatchRecoveryState:
+    """FA-017.5 (Design Round 3). Derived exclusively from
+    BatchHistoryItem.undo_available/already_undone, both themselves derived
+    only from validated durable evidence (TransactionStatus.SUCCEEDED +
+    queries.find_successful_recoveries).
+
+    Proof that FULLY_RECOVERED requires complete positive evidence, not
+    merely "no item currently offers Undo": for any item whose transaction
+    resolved to SUCCEEDED, undo_available and already_undone are exact,
+    exhaustive complements (exactly one is True) -- an item can only reach
+    this point with a resolved TransactionResult at all because
+    _reconstruct_batch fails the ENTIRE batch closed (returns a
+    LookupFailure, never a BatchHistoryEntry) if any transaction_id cannot
+    be conclusively resolved. Ambiguous/unparseable RECOVERY evidence for
+    one item is silently excluded from successful_recoveries (see that
+    function's own docstring) rather than failing the batch closed -- but
+    this only ever leaves that item's undo_available=True, never promotes
+    it to already_undone=True. Therefore `not any(undo_available)` among
+    items that were ever a validated-SUCCEEDED transaction is mathematically
+    equivalent to "every one of them is validated-recovered", never a
+    guess from absence alone. Items that were never a validated-SUCCEEDED
+    transaction (no transaction_id, or REJECTED/FAILED) have both flags
+    False and are correctly irrelevant to this aggregate either way."""
+    any_available = any(i.undo_available for i in items)
+    any_undone = any(i.already_undone for i in items)
+    if any_available and any_undone:
+        return BatchRecoveryState.MIXED
+    if any_available:
+        return BatchRecoveryState.AVAILABLE
+    if any_undone:
+        return BatchRecoveryState.FULLY_RECOVERED
+    return BatchRecoveryState.NONE
+
+
 # --- Reconstruction ----------------------------------------------------------
 
 
@@ -432,6 +496,7 @@ def _reconstruct_batch(
         source_path: Path | None = None
         destination_path: Path | None = None
         undo_available = False
+        already_undone = False
         if record.transaction_id is not None:
             tx_lookup = queries.find_transaction_result(store, record.transaction_id)
             if isinstance(tx_lookup, queries.LookupFailure):
@@ -465,6 +530,10 @@ def _reconstruct_batch(
                 tx_lookup.status is TransactionStatus.SUCCEEDED
                 and record.transaction_id not in successful_recoveries
             )
+            already_undone = (
+                tx_lookup.status is TransactionStatus.SUCCEEDED
+                and record.transaction_id in successful_recoveries
+            )
         elif record.file_id is not None:
             # Never reached TransactionEngine -- the only durable source is
             # the discovery record itself, via the persisted file_id.
@@ -483,6 +552,7 @@ def _reconstruct_batch(
                 source_path,
                 destination_path,
                 undo_available,
+                already_undone,
             )
         )
 
@@ -531,6 +601,7 @@ def _reconstruct_batch(
         skipped_count=counts["skipped"],
         invalid_count=counts["invalid"],
         processed_count=len(effective_items),
+        recovery_state=_batch_recovery_state(effective_items),
         items=tuple(effective_items) if include_items else None,
     )
 

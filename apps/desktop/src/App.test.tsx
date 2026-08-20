@@ -687,6 +687,299 @@ describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () =>
   });
 });
 
+// FA-017.5 Part 25-32: Undo's own retained-completion lifecycle -- Undo can
+// only ever originate from historyDetail(batchId) (Major 1's removal of any
+// compact-card shortcut), so every test here reaches History directly via
+// the sidebar and mocked history.list_recent/history.get_batch fixtures,
+// never through the organize flow.
+const HISTORY_ROOTS_RESULT = {
+  outcome: "ok",
+  result: {
+    roots: [
+      { id: "root-1", displayPath: "C:/Descargas", status: "available" },
+      { id: "root-2", displayPath: "C:/Documentos", status: "available" },
+    ],
+  },
+};
+
+function historyRow(batchId: string, managedRootId: string) {
+  return {
+    rowType: "entry",
+    outcome: "found",
+    batchId,
+    startedAt: "2026-01-01T00:00:00Z",
+    completedAt: "2026-01-01T00:00:01Z",
+    status: "completed",
+    selectedCount: 1,
+    appliedCount: 1,
+    notAppliedCount: 0,
+    skippedCount: 0,
+    invalidCount: 0,
+    processedCount: 1,
+    managedRootId,
+    items: null,
+    summaryMessage: {
+      title: "1 archivos se organizaron correctamente.",
+      detail: "Todos los archivos seleccionados se movieron a su carpeta.",
+      severity: "info",
+      suggestedAction: "none",
+    },
+    recoveryMessage: null,
+  };
+}
+
+function historyDetail(batchId: string, managedRootId: string, transactionId: string) {
+  return {
+    outcome: "ok",
+    result: {
+      ...historyRow(batchId, managedRootId),
+      items: [
+        {
+          policyDecisionId: `pd-${batchId}`,
+          inputIndex: 0,
+          status: "applied",
+          transactionId,
+          reasonDetail: null,
+          filename: "factura.pdf",
+          sourceDisplayPath: "C:/Descargas/factura.pdf",
+          destinationDisplayPath: "C:/Descargas/Documents/factura.pdf",
+          undoAvailable: true,
+          alreadyUndone: false,
+          message: {
+            title: "Organizado",
+            detail: "Se movió de C:/Descargas/factura.pdf a C:/Descargas/Documents/factura.pdf.",
+            severity: "info",
+            suggestedAction: "none",
+          },
+        },
+      ],
+    },
+  };
+}
+
+describe("App -- Undo retained-completion lifecycle (FA-017.5)", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    queryClient.clear();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  async function goToHistory() {
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Historial" }));
+    await screen.findByRole("heading", { name: "Historial" });
+  }
+
+  it("Undo completing while still on the exact originating batch's detail screen updates in place, no retained notice", async () => {
+    let resolveUndo!: (value: unknown) => void;
+    const undoPromise = new Promise((resolve) => {
+      resolveUndo = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return HISTORY_ROOTS_RESULT;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [historyRow("batch-a", "root-1")] } };
+      if (command === "history.get_batch") return historyDetail("batch-a", "root-1", "tx-a");
+      if (command === "recovery.undo_transaction") return undoPromise;
+      return { outcome: "ok", result: {} };
+    });
+
+    await goToHistory();
+    await userEvent.click(await screen.findByRole("button", { name: "Ver detalles" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sí, deshacer" }));
+
+    resolveUndo({
+      outcome: "ok",
+      result: {
+        transactionId: "tx-a",
+        recoveryId: "rec-a",
+        status: "succeeded",
+        restoredDisplayPath: "C:/Descargas/factura.pdf",
+        message: null,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Avisos de organización")).not.toBeInTheDocument();
+    });
+  });
+
+  it("Undo starting in batch A's detail, navigating away, then completing is retained carrying exactly batch A", async () => {
+    let resolveUndo!: (value: unknown) => void;
+    const undoPromise = new Promise((resolve) => {
+      resolveUndo = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return HISTORY_ROOTS_RESULT;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [historyRow("batch-a", "root-1")] } };
+      if (command === "history.get_batch") return historyDetail("batch-a", "root-1", "tx-a");
+      if (command === "recovery.undo_transaction") return undoPromise;
+      return { outcome: "ok", result: {} };
+    });
+
+    await goToHistory();
+    await userEvent.click(await screen.findByRole("button", { name: "Ver detalles" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sí, deshacer" }));
+
+    // Navigate away before the Undo resolves.
+    await userEvent.click(screen.getByRole("button", { name: "Carpetas" }));
+    await screen.findByRole("heading", { name: "Carpetas que FileAgent puede organizar" });
+
+    resolveUndo({
+      outcome: "ok",
+      result: {
+        transactionId: "tx-a",
+        recoveryId: "rec-a",
+        status: "succeeded",
+        restoredDisplayPath: "C:/Descargas/factura.pdf",
+        message: null,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Avisos de organización")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Cambio deshecho")).toBeInTheDocument();
+    // Never force-navigated.
+    expect(screen.getByRole("heading", { name: "Carpetas que FileAgent puede organizar" })).toBeInTheDocument();
+
+    // Opening the notice navigates to the exact originating batch's detail
+    // screen -- never a generic History landing.
+    await userEvent.click(screen.getByRole("button", { name: "Ver historial" }));
+    expect(await screen.findByText("factura.pdf")).toBeInTheDocument();
+  });
+
+  it("a retained Undo notice for batch A does not affect batch B's own state while viewing it", async () => {
+    let resolveUndoA!: (value: unknown) => void;
+    const undoAPromise = new Promise((resolve) => {
+      resolveUndoA = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      const params = (args as { params?: Record<string, unknown> })?.params;
+      if (command === "managed_roots.list") return HISTORY_ROOTS_RESULT;
+      if (command === "history.list_recent") {
+        return {
+          outcome: "ok",
+          result: { rows: [historyRow("batch-a", "root-1"), historyRow("batch-b", "root-2")] },
+        };
+      }
+      if (command === "history.get_batch") {
+        const batchId = params?.batchId as string;
+        return batchId === "batch-b"
+          ? historyDetail("batch-b", "root-2", "tx-b")
+          : historyDetail("batch-a", "root-1", "tx-a");
+      }
+      if (command === "recovery.undo_transaction") return undoAPromise;
+      return { outcome: "ok", result: {} };
+    });
+
+    await goToHistory();
+    const detailButtons = await screen.findAllByRole("button", { name: "Ver detalles" });
+    await userEvent.click(detailButtons[0]); // batch A
+    await userEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sí, deshacer" }));
+
+    // Navigate to batch B's own detail screen before A resolves.
+    await userEvent.click(screen.getByText("← Historial"));
+    const detailButtonsAgain = await screen.findAllByRole("button", { name: "Ver detalles" });
+    await userEvent.click(detailButtonsAgain[1]); // batch B
+    await screen.findByText("factura.pdf");
+    // Batch B's own item still offers Deshacer -- untouched by A's pending Undo.
+    expect(screen.getByRole("button", { name: "Deshacer" })).toBeInTheDocument();
+
+    resolveUndoA({
+      outcome: "ok",
+      result: {
+        transactionId: "tx-a",
+        recoveryId: "rec-a",
+        status: "succeeded",
+        restoredDisplayPath: "C:/Descargas/factura.pdf",
+        message: null,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Avisos de organización")).toBeInTheDocument();
+    });
+    // Still on batch B, unaffected.
+    expect(screen.getByText("factura.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Deshacer" })).toBeInTheDocument();
+  });
+
+  it("dismissing a retained Undo notice removes only it and issues no backend call", async () => {
+    let resolveUndo!: (value: unknown) => void;
+    const undoPromise = new Promise((resolve) => {
+      resolveUndo = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return HISTORY_ROOTS_RESULT;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [historyRow("batch-a", "root-1")] } };
+      if (command === "history.get_batch") return historyDetail("batch-a", "root-1", "tx-a");
+      if (command === "recovery.undo_transaction") return undoPromise;
+      return { outcome: "ok", result: {} };
+    });
+
+    await goToHistory();
+    await userEvent.click(await screen.findByRole("button", { name: "Ver detalles" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sí, deshacer" }));
+    await userEvent.click(screen.getByRole("button", { name: "Carpetas" }));
+
+    resolveUndo({
+      outcome: "ok",
+      result: {
+        transactionId: "tx-a",
+        recoveryId: "rec-a",
+        status: "succeeded",
+        restoredDisplayPath: "C:/Descargas/factura.pdf",
+        message: null,
+      },
+    });
+    await screen.findByRole("button", { name: "Descartar aviso" });
+
+    const callsBefore = vi.mocked(invoke).mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Descartar aviso" }));
+    expect(screen.queryByLabelText("Avisos de organización")).not.toBeInTheDocument();
+    expect(vi.mocked(invoke).mock.calls.length).toBe(callsBefore);
+  });
+
+  it("UNKNOWN Undo outcome is retained, never claims success or failure", async () => {
+    let resolveUndo!: (value: unknown) => void;
+    const undoPromise = new Promise((resolve) => {
+      resolveUndo = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return HISTORY_ROOTS_RESULT;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [historyRow("batch-a", "root-1")] } };
+      if (command === "history.get_batch") return historyDetail("batch-a", "root-1", "tx-a");
+      if (command === "recovery.undo_transaction") return undoPromise;
+      return { outcome: "ok", result: {} };
+    });
+
+    await goToHistory();
+    await userEvent.click(await screen.findByRole("button", { name: "Ver detalles" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Deshacer" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Sí, deshacer" }));
+    await userEvent.click(screen.getByRole("button", { name: "Carpetas" }));
+
+    resolveUndo({ outcome: "unknown_mutation_outcome" });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("No pudimos confirmar si la operación terminó."),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Cambio deshecho")).not.toBeInTheDocument();
+    expect(screen.queryByText(/no pudimos deshacer/i)).not.toBeInTheDocument();
+  });
+});
+
 function fullPrepareResult(managedRootId = "root-1") {
   return {
     outcome: "ok",

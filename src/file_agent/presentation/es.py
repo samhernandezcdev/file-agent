@@ -40,6 +40,7 @@ from file_agent.application.errors import (
 from file_agent.application.history import (
     BatchHistoryEntry,
     BatchHistoryItem,
+    BatchRecoveryState,
     UnavailableBatchHistoryRow,
 )
 from file_agent.application.managed_roots import (
@@ -198,6 +199,82 @@ def rejection_reason_detail(reason_code: str | None) -> str:
     if reason_code is None:
         return _FALLBACK_DETAIL
     return _REASON_DETAIL.get(reason_code, _FALLBACK_DETAIL)
+
+
+# FA-017.5 (Design Round 2 §11 / Part 22-23): a dedicated, recovery-only
+# reason-code table -- deliberately NOT merged into the shared
+# _REASON_DETAIL above. RecoveryRejectionCode.BASENAME_MISMATCH and
+# TransactionEngine's own RejectionCode.BASENAME_MISMATCH share the exact
+# literal value "basename_mismatch"; RejectionCode's is a deliberately
+# unmapped, not-normally-user-reachable internal-consistency code (see
+# _REASON_DETAIL's own comment above it). Adding recovery-specific wording
+# for that key to the shared table would silently change the existing
+# apply-path fallback behavior for an unrelated code. Every
+# RecoveryRejectionCode value lives here together (not just the one
+# colliding key) so this domain's whole vocabulary has one home, never
+# split awkwardly across two tables. Used ONLY by undo_result_view/
+# restore_result_view -- never by _generic_rejection_message's other call
+# sites (apply/review/managed-root-remove), which keep using
+# rejection_reason_detail/_REASON_DETAIL exactly as before.
+_RECOVERY_REASON_DETAIL: dict[str, str] = {
+    "basename_mismatch": (
+        "No pudimos confirmar la identidad de este archivo de forma segura."
+    ),
+    "current_file_missing": (
+        "Ya no encontramos el archivo en la carpeta donde FileAgent lo había movido."
+    ),
+    "current_file_changed": (
+        "El archivo cambió desde que FileAgent lo movió. Vuelve a revisarlo "
+        "antes de deshacer."
+    ),
+    "original_path_occupied": (
+        "La ubicación original ya contiene un archivo con ese nombre. No "
+        "reemplazamos ningún archivo."
+    ),
+    "original_path_outside_sandbox": (
+        "No pudimos confirmar que la ubicación original sea segura."
+    ),
+    "original_path_unsafe_reparse_point": (
+        "No pudimos confirmar que la ubicación original sea segura."
+    ),
+    "original_parent_missing": "La carpeta original ya no existe.",
+    "target_path_occupied": (
+        "La ubicación original ya contiene un archivo con ese nombre. No "
+        "reemplazamos ningún archivo."
+    ),
+    "target_path_outside_sandbox": (
+        "No pudimos confirmar que la ubicación original sea segura."
+    ),
+    "target_path_unsafe_reparse_point": (
+        "No pudimos confirmar que la ubicación original sea segura."
+    ),
+    "target_parent_missing": "La carpeta original ya no existe.",
+    "vault_object_not_found": "No pudimos restaurar este archivo de forma segura.",
+    "vault_object_corrupted": "No pudimos restaurar este archivo de forma segura.",
+    "vault_storage_unsafe": "No pudimos restaurar este archivo de forma segura.",
+    "restored_bytes_hash_mismatch": (
+        "No pudimos restaurar este archivo de forma segura."
+    ),
+}
+
+
+def recovery_rejection_detail(reason_code: str | None) -> str:
+    """FA-017.5. The recovery-only counterpart to rejection_reason_detail --
+    checks the dedicated _RECOVERY_REASON_DETAIL table first (never shared
+    with apply/review/managed-root-remove, see that table's own docstring),
+    then falls through to the ordinary shared rejection_reason_detail for
+    every other code (the ApplicationRejectionReason values exclusive to
+    undo_transaction/restore_capture -- transaction_not_found,
+    ambiguous_transaction_history, requested_without_terminal,
+    original_transaction_not_succeeded, capture_not_found,
+    ambiguous_capture_history -- and malformed_event_payload, which is
+    already safely shared/context-neutral, plus any future/unrecognized
+    code)."""
+    if reason_code is None:
+        return _FALLBACK_DETAIL
+    if reason_code in _RECOVERY_REASON_DETAIL:
+        return _RECOVERY_REASON_DETAIL[reason_code]
+    return rejection_reason_detail(reason_code)
 
 
 # --- Plan item messages -------------------------------------------------------
@@ -424,6 +501,40 @@ def history_summary_message(entry: BatchHistoryEntry) -> UserMessage:
         applied=entry.applied_count,
         not_applied=entry.not_applied_count,
     )
+
+
+_RECOVERY_STATE_MESSAGE: dict[BatchRecoveryState, UserMessage] = {
+    BatchRecoveryState.AVAILABLE: UserMessage(
+        title="Puedes deshacer cambios",
+        detail="Algunos archivos organizados en esta operación todavía se pueden deshacer.",
+        severity=Severity.INFO,
+        suggested_action=SuggestedAction.NONE,
+    ),
+    BatchRecoveryState.MIXED: UserMessage(
+        title="Algunos cambios ya se deshicieron",
+        detail=(
+            "Parte de los archivos organizados en esta operación se "
+            "deshicieron; otros todavía se pueden deshacer."
+        ),
+        severity=Severity.INFO,
+        suggested_action=SuggestedAction.NONE,
+    ),
+    BatchRecoveryState.FULLY_RECOVERED: UserMessage(
+        title="Cambios deshechos",
+        detail="Todos los archivos que se organizaron en esta operación se deshicieron.",
+        severity=Severity.INFO,
+        suggested_action=SuggestedAction.NONE,
+    ),
+}
+
+
+def history_recovery_message(entry: BatchHistoryEntry) -> UserMessage | None:
+    """FA-017.5 (Part 5). Python-owned batch-level recovery presentation --
+    React renders this opaquely and never derives AVAILABLE/MIXED/
+    FULLY_RECOVERED meaning itself. None (never rendered) for
+    BatchRecoveryState.NONE -- a batch with nothing undoable and nothing
+    recovered gets no recovery-state line at all, not an empty one."""
+    return _RECOVERY_STATE_MESSAGE.get(entry.recovery_state)
 
 
 def unavailable_history_row_message(row: UnavailableBatchHistoryRow) -> UserMessage:

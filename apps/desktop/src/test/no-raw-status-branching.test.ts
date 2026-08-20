@@ -25,6 +25,8 @@ const GUARDED_FILES = [
   "features/organization-plan/ConflictSummary.tsx",
   "features/apply/ApplyResultsScreen.tsx",
   "features/history/HistoryScreen.tsx",
+  "features/history/HistoryDetailScreen.tsx",
+  "components/ui/UndoCompletionNotice.tsx",
 ];
 
 // A raw product-status/reason-code comparison used to decide behavior --
@@ -69,9 +71,29 @@ describe("no raw product-status/reason-code branching in React", () => {
     expect(source).toContain("needsReviewAction");
   });
 
-  it("HistoryScreen uses undoAvailable, not a raw status/transactionId comparison, to gate Deshacer", () => {
-    const source = readSource("features/history/HistoryScreen.tsx");
+  it("HistoryDetailScreen uses undoAvailable/alreadyUndone, not a raw status/transactionId comparison, to gate Deshacer", () => {
+    const source = readSource("features/history/HistoryDetailScreen.tsx");
     expect(source).toContain("undoAvailable");
+    expect(source).toContain("alreadyUndone");
     expect(source).not.toMatch(/item\.status\s*===\s*"applied"/);
+  });
+
+  // FA-017.5 Part 9: SUMMARY NAVIGATION != FILESYSTEM MUTATION -- the
+  // compact card never renders a Deshacer/mutation trigger, and never
+  // reads undoAvailable/alreadyUndone at all (it only ever renders the
+  // already-composed recoveryMessage opaquely).
+  it("HistoryScreen never renders a Deshacer action or reads item-level undo facts", () => {
+    const source = readSource("features/history/HistoryScreen.tsx");
+    expect(source).not.toContain("undoAvailable");
+    expect(source).not.toContain("alreadyUndone");
+    expect(source).not.toMatch(/Deshacer/);
+  });
+
+  it("HistoryScreen and HistoryDetailScreen never derive BatchRecoveryState meaning themselves", () => {
+    for (const path of ["features/history/HistoryScreen.tsx", "features/history/HistoryDetailScreen.tsx"]) {
+      const source = readSource(path);
+      expect(source).not.toMatch(/recoveryMessage\s*===\s*"/);
+      expect(source).not.toMatch(/\brecoveryState\b/);
+    }
   });
 });

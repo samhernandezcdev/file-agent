@@ -664,6 +664,11 @@ class BatchHistoryItemView(ViewModel):
     """FA-017.3. Durable evidence permits offering Deshacer -- never a
     guarantee. See application.history.BatchHistoryItem's field of the
     same name."""
+    already_undone: bool
+    """FA-017.5. Durable evidence a validated recovery already exists for
+    this transaction. See application.history.BatchHistoryItem's field of
+    the same name -- exact complement of undo_available for a SUCCEEDED
+    transaction, never a caller claim or filesystem inference."""
     message: UserMessageView
 
 
@@ -683,6 +688,11 @@ class BatchHistoryEntryView(ViewModel):
     managed_root_id: UUID | None
     items: tuple[BatchHistoryItemView, ...] | None
     summary_message: UserMessageView
+    recovery_message: UserMessageView | None
+    """FA-017.5. Python-composed batch-level recovery presentation (see
+    es.history_recovery_message) -- None iff BatchRecoveryState.NONE
+    (nothing undoable, nothing recovered). React renders this opaquely and
+    never derives AVAILABLE/MIXED/FULLY_RECOVERED meaning itself."""
 
 
 def batch_history_entry_view(entry: BatchHistoryEntry) -> BatchHistoryEntryView:
@@ -707,10 +717,12 @@ def batch_history_entry_view(entry: BatchHistoryEntry) -> BatchHistoryEntryView:
                     str(i.destination_path) if i.destination_path is not None else None
                 ),
                 undo_available=i.undo_available,
+                already_undone=i.already_undone,
                 message=_message_view(es.history_item_message(i)),
             )
             for i in entry.items
         )
+    recovery_message = es.history_recovery_message(entry)
     return BatchHistoryEntryView(
         row_type="entry",
         outcome="found",
@@ -727,6 +739,9 @@ def batch_history_entry_view(entry: BatchHistoryEntry) -> BatchHistoryEntryView:
         managed_root_id=entry.managed_root_id,
         items=items,
         summary_message=_message_view(es.history_summary_message(entry)),
+        recovery_message=(
+            _message_view(recovery_message) if recovery_message is not None else None
+        ),
     )
 
 
@@ -796,8 +811,15 @@ def undo_result_view(result: UndoResult) -> UndoResultView:
         if result.reason_code == "historical_root_unavailable":
             message = _message_view(es.undo_historical_root_unavailable_message())
         else:
-            message = _generic_rejection_message(
-                "No pudimos deshacer este cambio.", result.reason_code
+            # FA-017.5 Part 22: recovery-specific copy, never the shared
+            # apply/review/managed-root-remove _generic_rejection_message
+            # path -- see es.recovery_rejection_detail's own docstring for
+            # the basename_mismatch collision this avoids.
+            message = UserMessageView(
+                title="No pudimos deshacer este cambio.",
+                detail=es.recovery_rejection_detail(result.reason_code),
+                severity="error",
+                suggested_action="none",
             )
     return UndoResultView(
         transaction_id=result.transaction_id,
@@ -824,8 +846,12 @@ def restore_result_view(result: RestoreResult) -> RestoreResultView:
         if result.reason_code == "historical_root_unavailable":
             message = _message_view(es.restore_historical_root_unavailable_message())
         else:
-            message = _generic_rejection_message(
-                "No pudimos restaurar este archivo.", result.reason_code
+            # FA-017.5 Part 22: recovery-specific copy -- see undo_result_view.
+            message = UserMessageView(
+                title="No pudimos restaurar este archivo.",
+                detail=es.recovery_rejection_detail(result.reason_code),
+                severity="error",
+                suggested_action="none",
             )
     return RestoreResultView(
         capture_id=result.capture_id,
