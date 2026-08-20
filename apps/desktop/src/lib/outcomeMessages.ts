@@ -1,11 +1,25 @@
 import type {
   BatchApplyResultView,
+  DestinationSetupResultView,
   ManagedRootUnavailableResultView,
   UserMessageView,
 } from "@file-agent/desktop-types";
 import type { RustOutcome } from "../desktop";
 
 export type NonOkGuidance = { title: string; detail: string };
+
+/** The apply.items RustOutcome shape, exported once here (mirroring
+ * DestinationSetupOutcome below) so CompletionNotice.tsx has a canonical
+ * type argument for RetainedCompletion<TOutcome> without re-deriving it. */
+export type ApplyOutcome = RustOutcome<BatchApplyResultView | ManagedRootUnavailableResultView>;
+
+/** FA-017.4 §2: the destination_setup.prepare RustOutcome shape,
+ * exported once here so App.tsx and DestinationSetupCompletionNotice.tsx
+ * share exactly one definition instead of each re-deriving it from
+ * `desktop.destinationSetup.prepare`'s return type. */
+export type DestinationSetupOutcome = RustOutcome<
+  DestinationSetupResultView | ManagedRootUnavailableResultView
+>;
 
 export type OutcomeContext =
   | "apply"
@@ -67,7 +81,7 @@ export type CompletionPresentation =
   | { kind: "unknown" };
 
 function assertNever(x: never): never {
-  throw new Error(`completionPresentation: unhandled outcome variant: ${JSON.stringify(x)}`);
+  throw new Error(`outcomeMessages: unhandled outcome variant: ${JSON.stringify(x)}`);
 }
 
 /** Classifies an ALREADY FINAL apply RustOutcome into its presentation
@@ -99,6 +113,61 @@ export function completionPresentation(
     case "retryable_interrupted":
     case "transport_unavailable": {
       const guidance = guidanceForOutcome(outcome, "apply")!; // never null here
+      return {
+        kind: "known_no_result",
+        message: {
+          title: guidance.title,
+          detail: guidance.detail,
+          severity: "error",
+          suggestedAction: "none",
+        },
+      };
+    }
+    default:
+      return assertNever(outcome);
+  }
+}
+
+/** FA-017.4 §2/§3: the destination-setup analog of CompletionPresentation
+ * above -- deliberately a SEPARATE type and a SEPARATE function, not a
+ * shared/parametrized one. The two outcome shapes
+ * (BatchApplyResultView vs DestinationSetupResultView) are different
+ * DTOs with different product meaning (a batch of file moves vs a batch
+ * of folder creations); collapsing them into one function would need an
+ * internal branch on which DTO it received, which defeats the point of
+ * each switch being independently exhaustive. Destination setup is never
+ * routed through History (FA-017.2 §12, unchanged) -- there is no
+ * `"result"` case here that ever suggests it, and callers must never add
+ * one. */
+export type DestinationSetupCompletionPresentation =
+  | { kind: "result"; result: DestinationSetupResultView }
+  | { kind: "known_no_result"; message: UserMessageView }
+  | { kind: "unknown" };
+
+/** Classifies an ALREADY FINAL destination_setup.prepare RustOutcome.
+ * Mirrors completionPresentation's shape exactly but never calls it --
+ * see the type's own docstring for why. */
+export function destinationSetupCompletionPresentation(
+  outcome: RustOutcome<DestinationSetupResultView | ManagedRootUnavailableResultView>,
+): DestinationSetupCompletionPresentation {
+  switch (outcome.outcome) {
+    case "ok": {
+      const result = outcome.result;
+      switch (result.outcome) {
+        case "ok":
+          return { kind: "result", result };
+        case "managed_root_unavailable":
+          return { kind: "known_no_result", message: result.message };
+        default:
+          return assertNever(result);
+      }
+    }
+    case "unknown_mutation_outcome":
+      return { kind: "unknown" };
+    case "product_error":
+    case "retryable_interrupted":
+    case "transport_unavailable": {
+      const guidance = guidanceForOutcome(outcome, "destination_setup")!; // never null here
       return {
         kind: "known_no_result",
         message: {

@@ -21,12 +21,14 @@ export function ConflictSummary({
   onReanalyze,
   onPrepare,
   preparing,
+  reanalyzing,
   result,
 }: {
   attention: PlanAttentionView;
   onReanalyze: () => void;
   onPrepare: () => void;
   preparing: boolean;
+  reanalyzing: boolean;
   result: DestinationSetupItemResultView | undefined;
 }) {
   if (result) {
@@ -37,8 +39,8 @@ export function ConflictSummary({
           title={`${result.destinationLabel} — ${result.message.title}`}
           detail={result.message.detail}
           action={
-            <Button variant="primary" onClick={onReanalyze}>
-              Analizar de nuevo
+            <Button variant="primary" onClick={onReanalyze} loading={reanalyzing}>
+              {reanalyzing ? "Analizando de nuevo…" : "Analizar de nuevo"}
             </Button>
           }
         />

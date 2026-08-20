@@ -28,6 +28,7 @@ describe("ConflictSummary", () => {
         onReanalyze={vi.fn()}
         onPrepare={vi.fn()}
         preparing={false}
+        reanalyzing={false}
         result={undefined}
       />,
     );
@@ -45,6 +46,7 @@ describe("ConflictSummary", () => {
         onReanalyze={vi.fn()}
         onPrepare={onPrepare}
         preparing={false}
+        reanalyzing={false}
         result={undefined}
       />,
     );
@@ -71,6 +73,7 @@ describe("ConflictSummary", () => {
         onReanalyze={vi.fn()}
         onPrepare={vi.fn()}
         preparing={false}
+        reanalyzing={false}
         result={result}
       />,
     );
@@ -98,6 +101,7 @@ describe("ConflictSummary", () => {
         onReanalyze={vi.fn()}
         onPrepare={vi.fn()}
         preparing={false}
+        reanalyzing={false}
         result={result}
       />,
     );

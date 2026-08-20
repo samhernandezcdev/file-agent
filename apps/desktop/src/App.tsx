@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Folder } from "lucide-react";
-import type {
-  BatchApplyResultView,
-  ManagedRootUnavailableResultView,
-} from "@file-agent/desktop-types";
+import type { BatchApplyResultView, ManagedRootUnavailableResultView } from "@file-agent/desktop-types";
 import { CompletionNotice } from "./components/ui/CompletionNotice";
+import { DestinationSetupCompletionNotice } from "./components/ui/DestinationSetupCompletionNotice";
 import { StepIndicator, type StepState } from "./components/ui/StepIndicator";
 import { Tooltip } from "./components/ui/Tooltip";
 import { Sidebar, type SidebarDestination } from "./components/Sidebar";
@@ -15,7 +13,11 @@ import { ManagedRootsScreen } from "./features/managed-roots/ManagedRootsScreen"
 import { useManagedRootsQuery } from "./features/managed-roots/useManagedRoots";
 import { PlanScreen } from "./features/organization-plan/PlanScreen";
 import { appendCompletion, removeCompletion, type RetainedCompletion } from "./lib/completionInbox";
-import { completionPresentation } from "./lib/outcomeMessages";
+import {
+  completionPresentation,
+  destinationSetupCompletionPresentation,
+  type DestinationSetupOutcome,
+} from "./lib/outcomeMessages";
 import "./App.css";
 
 type Screen =
@@ -41,15 +43,21 @@ function stepStatesFor(
 
 function App() {
   const [screen, setScreen] = useState<Screen>({ name: "roots" });
-  const [retainedCompletions, setRetainedCompletions] = useState<RetainedCompletion[]>([]);
+  const [retainedCompletions, setRetainedCompletions] = useState<
+    RetainedCompletion<ApplyOutcome>[]
+  >([]);
+  const [retainedDestinationSetupCompletions, setRetainedDestinationSetupCompletions] = useState<
+    RetainedCompletion<DestinationSetupOutcome>[]
+  >([]);
   const [applying, setApplying] = useState(false);
   const rootsQuery = useManagedRootsQuery();
 
-  // Read by onApplyCompleted, which is bound once at mutate()-call time
-  // inside PlanScreen and can fire long after this component re-rendered
-  // (or PlanScreen unmounted) -- a plain closure over `screen` would see
-  // whatever screen was active when the callback was created, not when it
-  // actually runs. The ref always reflects the current screen.
+  // Read by onApplyCompleted/onDestinationSetupCompleted, which are bound
+  // once at mutate()-call time inside PlanScreen and can fire long after
+  // this component re-rendered (or PlanScreen unmounted) -- a plain
+  // closure over `screen` would see whatever screen was active when the
+  // callback was created, not when it actually runs. The ref always
+  // reflects the current screen.
   const screenRef = useRef(screen);
   useEffect(() => {
     screenRef.current = screen;
@@ -73,16 +81,39 @@ function App() {
       return;
     }
     setRetainedCompletions((prev) =>
-      appendCompletion(prev, {
-        id: crypto.randomUUID(),
-        managedRootId,
-        outcome,
-        receivedAt: Date.now(),
-      }),
+      appendCompletion(
+        prev,
+        { id: crypto.randomUUID(), managedRootId, outcome, receivedAt: Date.now() },
+        (entry) => completionPresentation(entry.outcome).kind !== "unknown",
+      ),
     );
   }, []);
 
-  function openCompletion(entry: RetainedCompletion) {
+  // FA-017.4 §2: destination_setup.prepare has no dedicated results
+  // screen (FA-017.2 §12 -- deliberately absent from History, and there
+  // is nothing else to navigate to). The "still there" branch is
+  // therefore a no-op, not a screen transition: PlanScreen's own local
+  // `destinationResults` state already renders the per-category result
+  // banner in that case, so App.tsx has nothing to do except avoid a
+  // duplicate notice.
+  const onDestinationSetupCompleted = useCallback(
+    (managedRootId: string, outcome: DestinationSetupOutcome) => {
+      const current = screenRef.current;
+      if (current.name === "plan" && current.managedRootId === managedRootId) {
+        return;
+      }
+      setRetainedDestinationSetupCompletions((prev) =>
+        appendCompletion(
+          prev,
+          { id: crypto.randomUUID(), managedRootId, outcome, receivedAt: Date.now() },
+          (entry) => destinationSetupCompletionPresentation(entry.outcome).kind !== "unknown",
+        ),
+      );
+    },
+    [],
+  );
+
+  function openCompletion(entry: RetainedCompletion<ApplyOutcome>) {
     const presentation = completionPresentation(entry.outcome);
     setRetainedCompletions((prev) => removeCompletion(prev, entry.id));
     if (presentation.kind === "result") {
@@ -98,6 +129,21 @@ function App() {
     setRetainedCompletions((prev) => removeCompletion(prev, id));
   }
 
+  // FA-017.4 §2.2/Part 6: NOTICE NAVIGATION != REANALYSIS -- this only
+  // ever navigates to the exact managedRootId the notice itself carries
+  // (never the currently-active root, never inferred). The plan screen's
+  // own existing FA-017.2 invalidated-plan gate is what actually requires
+  // an explicit "Analizar de nuevo" once the user gets there; nothing
+  // here triggers analysis.run/plan.create/destination_setup.prepare.
+  function openDestinationSetupCompletion(entry: RetainedCompletion<DestinationSetupOutcome>) {
+    setRetainedDestinationSetupCompletions((prev) => removeCompletion(prev, entry.id));
+    setScreen({ name: "plan", managedRootId: entry.managedRootId });
+  }
+
+  function dismissDestinationSetupCompletion(id: string) {
+    setRetainedDestinationSetupCompletions((prev) => removeCompletion(prev, id));
+  }
+
   function navigate(destination: SidebarDestination) {
     setScreen(destination === "carpetas" ? { name: "roots" } : { name: "history" });
   }
@@ -109,21 +155,63 @@ function App() {
       : null;
   const showContextStrip = (screen.name === "plan" || screen.name === "results") && activeRoot;
 
+  // FA-017.4 §2.2/Part 5: two structurally separate state arrays (apply
+  // vs destination-setup notices are never merged as persistence/semantic
+  // models -- different outcome DTOs, different presentation functions,
+  // different eligibility for History) merged ONLY here, at render time,
+  // purely so they read as one coherent chronological "what just
+  // happened" region for the user.
+  const mergedNotices: (
+    | { kind: "apply"; entry: RetainedCompletion<ApplyOutcome> }
+    | { kind: "destinationSetup"; entry: RetainedCompletion<DestinationSetupOutcome> }
+  )[] = [
+    ...retainedCompletions.map((entry) => ({ kind: "apply" as const, entry })),
+    ...retainedDestinationSetupCompletions.map((entry) => ({
+      kind: "destinationSetup" as const,
+      entry,
+    })),
+  ].sort((a, b) => a.entry.receivedAt - b.entry.receivedAt);
+
+  // FA-017.4 Part 14: direct same-root reanalysis from Results, reusing
+  // the already-existing BatchApplyResultView.managedRootId field (no new
+  // backend field). Extracted to a plain local const before the closure
+  // -- TypeScript does not propagate a discriminated-union narrowing
+  // into a nested arrow function's closure over the same captured value
+  // (the exact closure-narrowing gap FA-017.2 §7 already hit once);
+  // narrowing a plain `string | null` local does propagate correctly.
+  // `null` when every selected id failed lineage resolution entirely --
+  // ApplyResultsScreen falls back to its own existing "Volver a la
+  // carpeta" (→ roots) in that rare case, never a crash.
+  const resultsManagedRootId = screen.name === "results" ? screen.result.managedRootId : null;
+  const resultsScreenReanalyzeHandler =
+    resultsManagedRootId !== null
+      ? () => setScreen({ name: "plan", managedRootId: resultsManagedRootId })
+      : null;
+
   return (
     <div className="flex min-h-screen bg-background">
       <Sidebar active={screen.name === "history" ? "historial" : "carpetas"} onNavigate={navigate} />
 
       <main className="flex-1 overflow-y-auto px-8 py-6">
-        {retainedCompletions.length > 0 ? (
+        {mergedNotices.length > 0 ? (
           <div className="mb-4 flex flex-col gap-2" aria-label="Avisos de organización">
-            {retainedCompletions.map((entry) => (
-              <CompletionNotice
-                key={entry.id}
-                entry={entry}
-                onOpen={() => openCompletion(entry)}
-                onDismiss={() => dismissCompletion(entry.id)}
-              />
-            ))}
+            {mergedNotices.map((notice) =>
+              notice.kind === "apply" ? (
+                <CompletionNotice
+                  key={notice.entry.id}
+                  entry={notice.entry}
+                  onOpen={() => openCompletion(notice.entry)}
+                  onDismiss={() => dismissCompletion(notice.entry.id)}
+                />
+              ) : (
+                <DestinationSetupCompletionNotice
+                  key={notice.entry.id}
+                  entry={notice.entry}
+                  onOpen={() => openDestinationSetupCompletion(notice.entry)}
+                  onDismiss={() => dismissDestinationSetupCompletion(notice.entry.id)}
+                />
+              ),
+            )}
           </div>
         ) : null}
 
@@ -157,6 +245,9 @@ function App() {
             managedRootId={screen.managedRootId}
             onApplyCompleted={onApplyCompleted}
             onApplyPendingChange={setApplying}
+            onDestinationSetupCompleted={onDestinationSetupCompleted}
+            onChooseAnotherFolder={() => setScreen({ name: "roots" })}
+            onViewHistory={() => setScreen({ name: "history" })}
           />
         ) : null}
 
@@ -165,6 +256,7 @@ function App() {
             result={screen.result}
             onViewHistory={() => setScreen({ name: "history" })}
             onDone={() => setScreen({ name: "roots" })}
+            onReanalyze={resultsScreenReanalyzeHandler}
           />
         ) : null}
 

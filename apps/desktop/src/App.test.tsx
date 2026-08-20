@@ -686,3 +686,219 @@ describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () =>
     await waitFor(() => expect(analysisCallCount).toBe(2));
   });
 });
+
+function fullPrepareResult(managedRootId = "root-1") {
+  return {
+    outcome: "ok",
+    result: {
+      outcome: "ok",
+      setupId: "setup-1",
+      managedRootId,
+      items: [
+        {
+          destinationCategory: "documents",
+          destinationLabel: "Documents",
+          status: "prepared",
+          message: {
+            title: "Preparada",
+            detail: "FileAgent creó esta carpeta.",
+            severity: "info",
+            suggestedAction: "none",
+          },
+        },
+      ],
+      summaryMessage: {
+        title: "1 carpetas preparadas.",
+        detail: "FileAgent debe volver a comprobar la carpeta antes de organizar.",
+        severity: "info",
+        suggestedAction: "reanalyze",
+      },
+    },
+  };
+}
+
+// FA-017.4 §2: destination_setup.prepare's own retained-completion
+// mechanism -- structurally parallel to the apply.items lifecycle above
+// but never routed through History, and its notice action is pure
+// navigation back to the originating root's plan screen (there is no
+// dedicated destination-setup results screen -- FA-017.2 §12, unchanged).
+describe("App -- destination-setup completion inbox lifecycle (FA-017.4)", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    queryClient.clear();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("a KNOWN full-success completion arriving after navigating away is retained as a notice offering 'Ir a la carpeta'", async () => {
+    let resolvePrepare!: (value: unknown) => void;
+    const preparePromise = new Promise((resolve) => {
+      resolvePrepare = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return ROOTS_RESULT;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTION;
+      if (command === "destination_setup.prepare") return preparePromise;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Historial" }));
+    expect(await screen.findByRole("heading", { name: "Historial" })).toBeInTheDocument();
+
+    resolvePrepare(fullPrepareResult());
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Avisos de organización")).toBeInTheDocument();
+    });
+    // Never force-navigated; the notice is offered, not applied.
+    expect(screen.getByRole("heading", { name: "Historial" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ir a la carpeta" })).toBeInTheDocument();
+    // Never surfaced through History (FA-017.2 §12/FA-017.4 §2.1, unchanged).
+    expect(screen.queryByRole("button", { name: "Ver historial" })).not.toBeInTheDocument();
+  });
+
+  it("an unknown_mutation_outcome completion is retained, never claims success or failure, and is never surfaced through History", async () => {
+    let resolvePrepare!: (value: unknown) => void;
+    const preparePromise = new Promise((resolve) => {
+      resolvePrepare = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return ROOTS_RESULT;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTION;
+      if (command === "destination_setup.prepare") return preparePromise;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Historial" }));
+
+    resolvePrepare({ outcome: "unknown_mutation_outcome" });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("No pudimos confirmar si la operación terminó."),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "Ir a la carpeta" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Ver historial" })).not.toBeInTheDocument();
+  });
+
+  it("cross-navigation: a Root A prepare completing while the user is on Root B leaves Root B's content unaffected and carries Root A's managedRootId", async () => {
+    let resolvePrepareA!: (value: unknown) => void;
+    const prepareAPromise = new Promise((resolve) => {
+      resolvePrepareA = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      const params = (args as { params?: Record<string, unknown> })?.params;
+      if (command === "managed_roots.list") return TWO_ROOTS_RESULT;
+      if (command === "analysis.run") {
+        return params?.managedRootId === "root-2" ? ANALYSIS_RESULT_B : ANALYSIS_RESULT;
+      }
+      if (command === "plan.create") {
+        const ids = (params?.policyDecisionIds as string[] | undefined) ?? [];
+        return ids.includes("pd-ready-b") ? PLAN_RESULT_B : PLAN_RESULT_WITH_ATTENTION;
+      }
+      if (command === "destination_setup.prepare") return prepareAPromise;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    const analyzeButtons = await screen.findAllByRole("button", { name: "Analizar" });
+    await userEvent.click(analyzeButtons[0]);
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
+
+    // Navigate to Root B before Root A's prepare resolves.
+    await userEvent.click(screen.getByRole("button", { name: "Carpetas" }));
+    const analyzeButtonsAgain = await screen.findAllByRole("button", { name: "Analizar" });
+    await userEvent.click(analyzeButtonsAgain[1]);
+    await screen.findByText("report.docx");
+    expect(screen.getByText("C:/Documentos")).toBeInTheDocument();
+
+    resolvePrepareA(fullPrepareResult("root-1"));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText("Avisos de organización")).toBeInTheDocument();
+    });
+    // Root B's content is unaffected -- no forced re-render/navigation.
+    expect(screen.getByText("report.docx")).toBeInTheDocument();
+    expect(screen.getByText("C:/Documentos")).toBeInTheDocument();
+    const notices = screen.getAllByRole("button", { name: "Ir a la carpeta" });
+    expect(notices).toHaveLength(1);
+
+    // Opening the notice navigates to Root A (not Root B, the currently
+    // active screen), and issues no destination_setup.prepare/analysis.run
+    // call by itself.
+    const prepareCallsBefore = vi
+      .mocked(invoke)
+      .mock.calls.filter(([, a]) => (a as { command?: string })?.command === "destination_setup.prepare")
+      .length;
+    await userEvent.click(notices[0]);
+    expect(await screen.findByText("C:/Descargas")).toBeInTheDocument();
+    expect(screen.queryByText("C:/Documentos")).not.toBeInTheDocument();
+    const prepareCallsAfter = vi
+      .mocked(invoke)
+      .mock.calls.filter(([, a]) => (a as { command?: string })?.command === "destination_setup.prepare")
+      .length;
+    expect(prepareCallsAfter).toBe(prepareCallsBefore);
+  });
+
+  it("dismissing a retained destination-setup notice removes only it and issues no backend call", async () => {
+    let resolvePrepare!: (value: unknown) => void;
+    const preparePromise = new Promise((resolve) => {
+      resolvePrepare = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return ROOTS_RESULT;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTION;
+      if (command === "destination_setup.prepare") return preparePromise;
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Historial" }));
+    resolvePrepare(fullPrepareResult());
+
+    await screen.findByRole("button", { name: "Ir a la carpeta" });
+    const callsBeforeDismiss = vi.mocked(invoke).mock.calls.length;
+    await userEvent.click(screen.getByRole("button", { name: "Descartar aviso" }));
+
+    expect(screen.queryByLabelText("Avisos de organización")).not.toBeInTheDocument();
+    expect(vi.mocked(invoke).mock.calls.length).toBe(callsBeforeDismiss);
+  });
+
+  it("a completion while still on the originating root's plan screen does not duplicate PlanScreen's own inline result banner as a notice", async () => {
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") return ROOTS_RESULT;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTION;
+      if (command === "destination_setup.prepare") return fullPrepareResult();
+      if (command === "history.list_recent") return { outcome: "ok", result: { rows: [] } };
+      return { outcome: "ok", result: {} };
+    });
+
+    renderApp();
+    await userEvent.click(await screen.findByRole("button", { name: "Analizar" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
+
+    await screen.findByText("Documents — Preparada");
+    expect(screen.queryByLabelText("Avisos de organización")).not.toBeInTheDocument();
+  });
+});

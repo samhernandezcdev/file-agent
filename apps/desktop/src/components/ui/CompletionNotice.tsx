@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import type { RetainedCompletion } from "../../lib/completionInbox";
-import { completionPresentation, guidanceForOutcome } from "../../lib/outcomeMessages";
+import { completionPresentation, guidanceForOutcome, type ApplyOutcome } from "../../lib/outcomeMessages";
 import { Banner } from "./Banner";
 import { Button } from "./Button";
 import { IconButton } from "./IconButton";
@@ -13,7 +13,7 @@ export function CompletionNotice({
   onOpen,
   onDismiss,
 }: {
-  entry: RetainedCompletion;
+  entry: RetainedCompletion<ApplyOutcome>;
   onOpen: () => void;
   onDismiss: () => void;
 }) {

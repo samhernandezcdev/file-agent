@@ -13,12 +13,25 @@ export function ApplyResultsScreen({
   result,
   onViewHistory,
   onDone,
+  onReanalyze,
 }: {
   result: BatchApplyResultView;
   onViewHistory: () => void;
   onDone: () => void;
+  /** FA-017.4 Part 14: direct same-root reanalysis, reusing
+   * result.managedRootId (no re-fetch of the roots list needed). `null`
+   * when the originating root's id could not be resolved -- the existing
+   * "Volver a la carpeta" action is the fallback in that rare case, never
+   * a broken or silently-omitted button. */
+  onReanalyze: (() => void) | null;
 }) {
   const { summary } = result;
+  // FA-017.4 Part 13: full success keeps History as the trust-reinforcing
+  // primary action (unchanged from FA-017.1 §20); a partial or fully
+  // failed batch instead promotes "Analizar de nuevo" to primary -- the
+  // most useful next step is seeing the folder's real current state, not
+  // reading about what already failed.
+  const isFullSuccess = summary.selected > 0 && summary.applied === summary.selected;
 
   return (
     <section aria-labelledby="apply-results-heading">
@@ -53,10 +66,30 @@ export function ApplyResultsScreen({
       ) : null}
 
       <div className="mt-6 flex items-center gap-3">
-        <Button variant="primary" onClick={onViewHistory}>
-          Ver historial
-        </Button>
-        <Button onClick={onDone}>Volver a la carpeta</Button>
+        {isFullSuccess ? (
+          <>
+            <Button variant="primary" onClick={onViewHistory}>
+              Ver historial
+            </Button>
+            {onReanalyze ? <Button onClick={onReanalyze}>Analizar de nuevo</Button> : null}
+          </>
+        ) : onReanalyze ? (
+          <>
+            <Button variant="primary" onClick={onReanalyze}>
+              Analizar de nuevo
+            </Button>
+            <Button onClick={onViewHistory}>Ver historial</Button>
+          </>
+        ) : (
+          <>
+            <Button variant="primary" onClick={onDone}>
+              Volver a la carpeta
+            </Button>
+            <Button onClick={onViewHistory}>Ver historial</Button>
+          </>
+        )}
+        {isFullSuccess ? <Button onClick={onDone}>Volver a la carpeta</Button> : null}
+        {!isFullSuccess && onReanalyze ? <Button onClick={onDone}>Volver a la carpeta</Button> : null}
       </div>
     </section>
   );
