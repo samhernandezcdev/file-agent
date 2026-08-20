@@ -5,9 +5,14 @@ codebase's rejection vocabularies define, plus for genuinely unknown/future
 codes; no raw enum name or forbidden jargon term ever appears in rendered
 copy."""
 
+from pathlib import Path
 from uuid import uuid4
 
-from file_agent.application.dto import ApplicationRejectionReason, BatchApplyItemStatus
+from file_agent.application.dto import (
+    ApplicationRejectionReason,
+    BatchApplyItemResult,
+    BatchApplyItemStatus,
+)
 from file_agent.application.errors import (
     AppDataManagedRootError,
     DuplicateManagedRootError,
@@ -18,6 +23,7 @@ from file_agent.application.errors import (
     SystemDirectoryManagedRootError,
     UserProfileManagedRootError,
 )
+from file_agent.application.history import BatchHistoryItem
 from file_agent.application.managed_roots import (
     ManagedRootLookupStatus,
     ManagedRootUnavailable,
@@ -47,6 +53,15 @@ FORBIDDEN_JARGON = (
     "authorization",
     "policy",
     "kind",
+    # FA-017.3: the internal execution/history vocabulary this ticket
+    # replaces with consumer Spanish -- never product-visible.
+    "applied",
+    "not_applied",
+    "PlanStatus",
+    "PolicyOutcome",
+    "RejectionCode",
+    "reason_code",
+    "transaction",
 )
 
 
@@ -176,6 +191,55 @@ def _all_rendered_strings() -> list[str]:
         strings.append(summary.title)
         strings.append(summary.detail)
 
+    # FA-017.3: batch_item_result_message (execution) across every status x
+    # every reason_code this codebase's three rejection vocabularies define
+    # x both source_unchanged_confirmed values, plus history_item_message
+    # (durable-only) across the same status/reason space.
+    all_reason_codes: list[str | None] = [None]
+    for enum_cls in (ApplicationRejectionReason, RejectionCode):
+        all_reason_codes.extend(member.value for member in enum_cls)
+    all_reason_codes.append("some_future_unmapped_code")
+
+    for status in BatchApplyItemStatus:
+        for reason_code in all_reason_codes:
+            if status is BatchApplyItemStatus.APPLIED and reason_code is not None:
+                continue  # APPLIED never carries a reason_code in practice
+            item = BatchApplyItemResult(
+                policy_decision_id=uuid4(),
+                input_index=0,
+                proposal_id=uuid4(),
+                file_id=uuid4(),
+                filename="report.pdf",
+                status=status,
+                transaction_id=uuid4(),
+                source_path=Path("C:/sandbox/report.pdf"),
+                destination_path=Path("C:/sandbox/Documents/report.pdf"),
+                reason_code=reason_code,
+                reason=None,
+                source_unchanged_confirmed=True,
+            )
+            for confirmed in (True, False):
+                message = es.batch_item_result_message(
+                    item, source_unchanged_confirmed=confirmed
+                )
+                strings.append(message.title)
+                strings.append(message.detail)
+
+            history_item = BatchHistoryItem(
+                policy_decision_id=uuid4(),
+                input_index=0,
+                status=status,
+                transaction_id=uuid4(),
+                reason_code=reason_code,
+                filename="report.pdf",
+                source_path=Path("C:/sandbox/report.pdf"),
+                destination_path=Path("C:/sandbox/Documents/report.pdf"),
+                undo_available=False,
+            )
+            history_message = es.history_item_message(history_item)
+            strings.append(history_message.title)
+            strings.append(history_message.detail)
+
     return strings
 
 
@@ -206,7 +270,12 @@ def test_rejection_reason_detail_is_total_never_raises_never_empty() -> None:
 def test_unmapped_code_renders_the_safe_generic_fallback() -> None:
     fallback = es.rejection_reason_detail(None)
     assert fallback == es.rejection_reason_detail("brand_new_code_from_a_future_ticket")
-    assert "no se realizó ningún cambio" in fallback.lower()
+    # FA-017.3: the fallback deliberately no longer claims "no change was
+    # made" -- an unmapped code includes a FAILED apply's free-text
+    # failure_reason, for which that claim is not guaranteed. The
+    # unchanged/unconfirmed claim is composed separately by the caller.
+    assert "no se realizó ningún cambio" not in fallback.lower()
+    assert "no modificó" not in fallback.lower()
 
 
 def test_no_forbidden_jargon_or_raw_enum_name_in_any_rendered_string() -> None:
@@ -219,6 +288,43 @@ def test_no_forbidden_jargon_or_raw_enum_name_in_any_rendered_string() -> None:
             assert f"BatchApplyItemStatus.{status.name}" not in text
 
 
+def test_every_mapped_reason_produces_a_truthful_consumer_message() -> None:
+    """No mapped reason ever renders empty, and English/PolicyOutcome-style
+    identifiers never leak through (already checked exhaustively by
+    test_no_forbidden_jargon_or_raw_enum_name_in_any_rendered_string --
+    this is a focused, minimal-fixture-count smoke test of the two new
+    composers specifically)."""
+    item = BatchApplyItemResult(
+        policy_decision_id=uuid4(),
+        input_index=0,
+        proposal_id=uuid4(),
+        file_id=uuid4(),
+        filename="report.pdf",
+        status=BatchApplyItemStatus.NOT_APPLIED,
+        transaction_id=uuid4(),
+        source_path=Path("C:/sandbox/report.pdf"),
+        destination_path=None,
+        reason_code="policy_block",
+        reason=None,
+        source_unchanged_confirmed=True,
+    )
+    message = es.batch_item_result_message(item, source_unchanged_confirmed=True)
+    assert message.title
+    assert message.detail
+    assert message.title.strip() == message.title
+    assert message.detail.strip() == message.detail
+
+
+def test_fallback_mapping_never_makes_an_unsupported_unchanged_claim() -> None:
+    """The generic fallback (an unrecognized/free-text reason) must never
+    itself assert the source was unchanged -- only a caller with actual
+    evidence (source_unchanged_confirmed=True, or a recognized pre-commit
+    reason_code) may add that sentence."""
+    detail = es.rejection_reason_detail("totally_unrecognized_future_code")
+    assert "no se modificó" not in detail.lower()
+    assert "no pudimos confirmar el estado final" not in detail.lower()
+
+
 def test_designated_product_contract_strings() -> None:
     """A small, explicitly-called-out set of exact-string checks -- not the
     entire vocabulary table, to avoid brittleness on ordinary copy edits."""
@@ -227,6 +333,5 @@ def test_designated_product_contract_strings() -> None:
     assert es.batch_item_status_label(BatchApplyItemStatus.APPLIED) == "Organizado"
     assert (
         es.rejection_reason_detail(None)
-        == "No pudimos completar esta acción de forma segura. "
-        "No se realizó ningún cambio en este archivo."
+        == "No pudimos completar esta acción de forma segura."
     )

@@ -161,9 +161,22 @@ describe("FA-017 golden path", () => {
 
     const resultsHeading = await browser.$("#apply-results-heading");
     await resultsHeading.waitForDisplayed({ timeout: 20000 });
+
+    // FA-017.3: expand the per-item detail (starts collapsed) to reveal
+    // consumer vocabulary and the real destination -- never a bare
+    // "success", never the internal applied/not_applied strings.
+    const detailsToggle = await browser.$("button=Ver detalles");
+    await detailsToggle.waitForDisplayed({ timeout: 15000 });
+    await detailsToggle.click();
+
+    const resultsBodyText = await browser.execute(() => document.body.innerText);
+    expect(resultsBodyText).toContain("Organizado");
+    expect(resultsBodyText).toContain("Se movió a");
+    expect(resultsBodyText).not.toContain("not_applied");
+    expect(resultsBodyText).not.toMatch(/\bapplied\b/);
   });
 
-  it("opens history and shows the completed batch", async () => {
+  it("opens history and shows the completed batch with consumer vocabulary and file identity", async () => {
     const viewHistoryButton = await browser.$("button=Ver historial");
     await viewHistoryButton.click();
 
@@ -173,9 +186,37 @@ describe("FA-017 golden path", () => {
     const batchRow = await browser.$("li button");
     await batchRow.waitForDisplayed({ timeout: 15000 });
     await batchRow.click();
+
+    // FA-017.3: History renders es.py's own composed message (never a raw
+    // status string) and, for a real transaction-linked item, the durably
+    // reconstructed filename/source/destination -- proving the
+    // BATCH_ITEM_RECORDED file_id round trip and the TransactionResult
+    // cross-verification both actually work end to end against the real
+    // sidecar and a real SQLite-backed store, not a mock.
+    const detailBodyText = await browser.execute(() => document.body.innerText);
+    expect(detailBodyText).toContain("invoice.pdf");
+    expect(detailBodyText).toContain("Organizado");
+    expect(detailBodyText).toContain("Se movió de");
+    expect(detailBodyText).not.toContain("not_applied");
+    expect(detailBodyText).not.toMatch(/\bapplied\b/);
+
+    // Undo is offered -- durable evidence (a SUCCEEDED transaction, no
+    // matching RECOVERY_SUCCEEDED yet) permits it.
+    const undoButton = await browser.$("button=Deshacer");
+    await undoButton.waitForDisplayed({ timeout: 15000 });
   });
 
-  it("undoes the transaction and reflects the change in the UI", async () => {
+  it("undoes the transaction, and History stops offering Deshacer for that item", async () => {
+    // The batch may contain more than one successfully-organized item
+    // (each gets its own Deshacer button) -- capture the count before, so
+    // the assertion below is robust to however many there are: undoing
+    // exactly one must reduce the count by exactly one, never to a count
+    // that implies either nothing changed or every item's undo was
+    // withdrawn.
+    const undoButtonsBefore = await browser.$$("button=Deshacer");
+    const countBefore = undoButtonsBefore.length;
+    expect(countBefore).toBeGreaterThan(0);
+
     const undoButton = await browser.$("button=Deshacer");
     await undoButton.waitForDisplayed({ timeout: 15000 });
     await undoButton.click();
@@ -188,6 +229,19 @@ describe("FA-017 golden path", () => {
     // AlertDialog closes on confirm) -- unchanged assertion from before
     // the Radix AlertDialog migration.
     await confirmButton.waitForExist({ reverse: true, timeout: 15000 });
+
+    // FA-017.3: revisit the SAME batch detail -- durable evidence (the
+    // RECOVERY_SUCCEEDED event just written, validated against this exact
+    // transaction) now correctly withdraws the Deshacer affordance for
+    // this one item, never offering to undo an already-undone transaction
+    // -- and never withdrawing it for any other, unrelated item either.
+    await browser.waitUntil(
+      async () => (await browser.$$("button=Deshacer")).length === countBefore - 1,
+      {
+        timeout: 15000,
+        timeoutMsg: "Deshacer count did not decrease by exactly one after a successful undo",
+      },
+    );
   });
 
   it("never exposes a folder-creation undo affordance anywhere in this flow", async () => {

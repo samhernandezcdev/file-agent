@@ -59,6 +59,7 @@ def test_plan_item_view_field_names_match_product_contract() -> None:
         detail="Este archivo está listo para organizarse.",
         severity="info",
         selectable=True,
+        needs_review_action=False,
     )
     dumped = item.model_dump(mode="json", by_alias=True)
     for expected_key in (
@@ -71,5 +72,6 @@ def test_plan_item_view_field_names_match_product_contract() -> None:
         "title",
         "detail",
         "selectable",
+        "needsReviewAction",
     ):
         assert expected_key in dumped

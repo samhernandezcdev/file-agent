@@ -21,6 +21,7 @@ UUID ordering.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from uuid import UUID
 
 from file_agent.application import queries
@@ -47,6 +48,22 @@ class BatchHistoryItem:
     status: BatchApplyItemStatus
     transaction_id: UUID | None
     reason_code: str | None
+    filename: str | None
+    """FA-017.3. Durably reconstructed -- from the resolved TransactionResult
+    when transaction_id is present, otherwise from the durable discovery
+    record via the persisted file_id (see BATCH_ITEM_RECORDED's own
+    file_id key). None when neither resolves: a pre-FA-017.3 row with no
+    file_id, or a file_id whose discovery record is itself gone. Never
+    guessed."""
+    source_path: Path | None
+    destination_path: Path | None
+    undo_available: bool
+    """FA-017.3. Durable evidence only -- true iff transaction_id resolves
+    to a SUCCEEDED TransactionResult AND no validated RECOVERY_SUCCEEDED
+    event exists for it (see queries.find_successful_recoveries). Means
+    "offering Deshacer is warranted by durable evidence," never "attempting
+    it will succeed" -- RecoveryEngine's own live preconditions are
+    unchanged and remain the actual enforcement boundary."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,6 +152,13 @@ def batch_item_recorded_event(
             "transaction_id": (
                 str(item.transaction_id) if item.transaction_id is not None else None
             ),
+            # FA-017.3: a pure semantic identity fact, never a display
+            # string -- History derives filename/source path from this via
+            # store.get_discovered_file, exactly as it already derives them
+            # from transaction_id via find_transaction_result when that's
+            # present instead. None only for the handful of rejections that
+            # precede file_id resolution entirely (see _apply_one).
+            "file_id": str(item.file_id) if item.file_id is not None else None,
         },
     )
 
@@ -171,6 +195,7 @@ class _ParsedItemRecord:
     item_status: BatchApplyItemStatus
     reason_code: str | None
     transaction_id: UUID | None
+    file_id: UUID | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,6 +233,10 @@ def _parse_managed_root_id(event: DomainEvent) -> UUID | None:
 
 def _parse_item_record(event: DomainEvent) -> _ParsedItemRecord:
     payload = event.payload
+    # .get, not [] -- a pre-FA-017.3 BATCH_ITEM_RECORDED payload simply has
+    # no "file_id" key at all, the same optional-payload-key pattern
+    # managed_root_id already uses for pre-FA-015 rows.
+    raw_file_id = payload.get("file_id")
     return _ParsedItemRecord(
         policy_decision_id=UUID(str(payload["policy_decision_id"])),
         input_index=int(payload["input_index"]),
@@ -218,6 +247,7 @@ def _parse_item_record(event: DomainEvent) -> _ParsedItemRecord:
             if payload["transaction_id"] is not None
             else None
         ),
+        file_id=UUID(str(raw_file_id)) if raw_file_id is not None else None,
     )
 
 
@@ -386,10 +416,22 @@ def _reconstruct_batch(
     # Step 5: cross-verification, with ownership validation (round-5
     # correction 1) -- a resolvable transaction_id is not enough; it must
     # genuinely belong to THIS batch and THIS policy_decision_id.
+    #
+    # FA-017.3: successful recoveries are enumerated ONCE here, not once
+    # per item -- find_successful_recoveries already does one full
+    # RECOVERY_SUCCEEDED enumeration per call, so calling it inside the
+    # loop below would turn this into one enumeration per item instead of
+    # per batch (see queries.find_successful_recoveries's own docstring).
+    successful_recoveries = queries.find_successful_recoveries(store)
+
     effective_items: list[BatchHistoryItem] = []
     for record in records:
         status = record.item_status
         reason_code = record.reason_code
+        filename: str | None = None
+        source_path: Path | None = None
+        destination_path: Path | None = None
+        undo_available = False
         if record.transaction_id is not None:
             tx_lookup = queries.find_transaction_result(store, record.transaction_id)
             if isinstance(tx_lookup, queries.LookupFailure):
@@ -412,6 +454,24 @@ def _reconstruct_batch(
                     "genuinely belong to this batch/policy_decision_id",
                 )
             status, reason_code = _effective_status_from_transaction(tx_lookup)
+            # A resolved TransactionResult always durably carries
+            # source_path/destination_path, regardless of status (§Round-2
+            # §0/§1.4) -- filename is derived from source_path's own
+            # basename, never separately persisted.
+            source_path = tx_lookup.source_path
+            destination_path = tx_lookup.destination_path
+            filename = tx_lookup.source_path.name
+            undo_available = (
+                tx_lookup.status is TransactionStatus.SUCCEEDED
+                and record.transaction_id not in successful_recoveries
+            )
+        elif record.file_id is not None:
+            # Never reached TransactionEngine -- the only durable source is
+            # the discovery record itself, via the persisted file_id.
+            discovered = store.get_discovered_file(record.file_id)
+            if discovered is not None:
+                filename = discovered.filename
+                source_path = discovered.path
         effective_items.append(
             BatchHistoryItem(
                 record.policy_decision_id,
@@ -419,6 +479,10 @@ def _reconstruct_batch(
                 status,
                 record.transaction_id,
                 reason_code,
+                filename,
+                source_path,
+                destination_path,
+                undo_available,
             )
         )
 

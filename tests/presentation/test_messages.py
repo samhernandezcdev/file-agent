@@ -56,9 +56,11 @@ def _batch_item(
         filename="report.pdf",
         status=status,
         transaction_id=None,
+        source_path=Path("C:/sandbox/report.pdf"),
         destination_path=None,
         reason_code=reason_code,
         reason=None,
+        source_unchanged_confirmed=True,
     )
 
 
@@ -107,22 +109,57 @@ def test_invalid_and_blocked_are_errors() -> None:
 
 
 def test_source_changed_reason_overrides_to_error_and_reanalyze() -> None:
-    message = es.batch_item_message(
+    message = es.batch_item_result_message(
         _batch_item(
             status=BatchApplyItemStatus.NOT_APPLIED,
             reason_code="source_identity_changed",
-        )
+        ),
+        source_unchanged_confirmed=True,
     )
     assert message.severity is Severity.ERROR
     assert message.suggested_action is SuggestedAction.REANALYZE
 
 
 def test_applied_batch_item_is_info() -> None:
-    message = es.batch_item_message(
-        _batch_item(status=BatchApplyItemStatus.APPLIED, reason_code=None)
+    message = es.batch_item_result_message(
+        _batch_item(status=BatchApplyItemStatus.APPLIED, reason_code=None),
+        source_unchanged_confirmed=False,
     )
     assert message.severity is Severity.INFO
     assert message.title == "Organizado"
+
+
+def test_not_applied_result_message_includes_unchanged_sentence_when_confirmed() -> (
+    None
+):
+    message = es.batch_item_result_message(
+        _batch_item(
+            status=BatchApplyItemStatus.NOT_APPLIED, reason_code="policy_block"
+        ),
+        source_unchanged_confirmed=True,
+    )
+    assert "no se modificó" in message.detail.lower()
+
+
+def test_not_applied_result_message_uses_unconfirmed_copy_when_not_confirmed() -> None:
+    message = es.batch_item_result_message(
+        _batch_item(status=BatchApplyItemStatus.NOT_APPLIED, reason_code=None),
+        source_unchanged_confirmed=False,
+    )
+    assert "no pudimos confirmar el estado final del archivo" in message.detail.lower()
+    assert "no se modificó" not in message.detail.lower()
+    assert "parcial" not in message.detail.lower()
+
+
+def test_already_at_destination_gets_its_own_title() -> None:
+    message = es.batch_item_result_message(
+        _batch_item(
+            status=BatchApplyItemStatus.NOT_APPLIED,
+            reason_code="source_equals_destination",
+        ),
+        source_unchanged_confirmed=True,
+    )
+    assert message.title == "No fue necesario moverlo"
 
 
 def _batch_result(

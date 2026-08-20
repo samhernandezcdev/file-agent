@@ -56,6 +56,7 @@ const PLAN_RESULT = {
         detail: "Este archivo está listo para organizarse.",
         severity: "info",
         selectable: true,
+        needsReviewAction: false,
       },
       {
         actionId: "pd-review",
@@ -68,6 +69,7 @@ const PLAN_RESULT = {
         detail: "Necesitamos tu aprobación antes de mover este archivo.",
         severity: "attention",
         selectable: false,
+        needsReviewAction: true,
       },
     ],
   },

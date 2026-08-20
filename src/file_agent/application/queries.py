@@ -467,6 +467,35 @@ def find_recovery_result(
         return _malformed(recovery_id, exc)
 
 
+def find_successful_recoveries(
+    store: FileAgentStore,
+) -> dict[UUID, RecoveryResult]:
+    """FA-017.3. Enumerates every RECOVERY_SUCCEEDED event once and returns
+    a mapping of validated original_transaction_id -> RecoveryResult, built
+    exclusively via find_recovery_result's own requested+terminal
+    reconstruction discipline -- the SAME integrity chain every other
+    result type in this module uses, never a raw unvalidated payload read.
+    A malformed/unparseable candidate, or one with no original_transaction_id
+    (e.g. a RESTORE_FROM_VAULT recovery, which is never transaction-linked),
+    is silently excluded -- it can neither prove nor disprove anything about
+    any transaction, never treated as a match.
+
+    Returns the whole mapping in one pass specifically so a caller checking
+    "was this transaction undone" for many transactions (history
+    reconstruction, potentially many items per batch) does one enumeration
+    total rather than one per transaction checked."""
+    recoveries: dict[UUID, RecoveryResult] = {}
+    for event in store.list_events_by_type(EventType.RECOVERY_SUCCEEDED):
+        candidate = find_recovery_result(store, event.entity_id)
+        if (
+            isinstance(candidate, RecoveryResult)
+            and candidate.status is RecoveryStatus.SUCCEEDED
+            and candidate.original_transaction_id is not None
+        ):
+            recoveries[candidate.original_transaction_id] = candidate
+    return recoveries
+
+
 # --- Batch (FA-014) -------------------------------------------------------
 # Batch event reconstruction (BATCH_APPLY_STARTED/BATCH_ITEM_RECORDED/
 # BATCH_APPLY_COMPLETED) lives entirely in application/history.py, not here

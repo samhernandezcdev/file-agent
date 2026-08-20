@@ -19,7 +19,6 @@ export function ApplyResultsScreen({
   onDone: () => void;
 }) {
   const { summary } = result;
-  const isPartial = summary.applied < summary.selected;
 
   return (
     <section aria-labelledby="apply-results-heading">
@@ -35,7 +34,7 @@ export function ApplyResultsScreen({
         {summary.applied} de {summary.selected} archivos se organizaron
       </p>
 
-      {isPartial && result.items.length > 0 ? (
+      {result.items.length > 0 ? (
         <div className="mt-3">
           <Collapsible triggerLabel="Ver detalles">
             <ul aria-label="Archivos procesados" className="flex flex-col gap-1">
@@ -43,7 +42,9 @@ export function ApplyResultsScreen({
                 <li key={item.policyDecisionId} className="text-sm text-foreground-muted">
                   <span className="font-medium text-foreground">{item.filename ?? "Archivo"}</span>
                   {" — "}
-                  {item.message.title}
+                  <span className="font-medium text-foreground">{item.message.title}</span>
+                  {". "}
+                  {item.message.detail}
                 </li>
               ))}
             </ul>

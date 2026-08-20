@@ -301,6 +301,12 @@ class PlanItemView(ViewModel):
     """True only when status is READY -- the sole case the frontend may
     offer a checkbox for. Review items get Aprobar/Omitir instead; every
     other status is informational-only, never client-side inferred."""
+    needs_review_action: bool
+    """FA-017.3. True only when status is REVIEW_REQUIRED -- the sole case
+    the frontend may offer Aprobar/Omitir for. A pure function of status,
+    computed here (not client-side) so React never compares the raw status
+    string itself, exactly mirroring selectable's own existing role for
+    READY."""
 
 
 def plan_item_view(item: OrganizationPlanItem) -> PlanItemView:
@@ -318,6 +324,7 @@ def plan_item_view(item: OrganizationPlanItem) -> PlanItemView:
         detail=message.detail,
         severity=message.severity.value,
         selectable=item.status is PlanStatus.READY,
+        needs_review_action=item.status is PlanStatus.REVIEW_REQUIRED,
     )
 
 
@@ -561,8 +568,14 @@ class BatchApplyItemResultView(ViewModel):
     filename: str | None
     status: str
     transaction_id: UUID | None
+    source_display_path: str | None
     destination_display_path: str | None
     message: UserMessageView
+    source_unchanged_confirmed: bool
+    """FA-017.3. See application.dto.BatchApplyItemResult's field of the
+    same name for full semantics -- ephemeral, execution-time-only, never
+    product-relevant for an APPLIED result (React must not render it
+    there)."""
 
 
 def batch_apply_item_result_view(
@@ -574,10 +587,18 @@ def batch_apply_item_result_view(
         filename=item.filename,
         status=item.status.value,
         transaction_id=item.transaction_id,
+        source_display_path=(
+            str(item.source_path) if item.source_path is not None else None
+        ),
         destination_display_path=(
             str(item.destination_path) if item.destination_path is not None else None
         ),
-        message=_message_view(es.batch_item_message(item)),
+        message=_message_view(
+            es.batch_item_result_message(
+                item, source_unchanged_confirmed=item.source_unchanged_confirmed
+            )
+        ),
+        source_unchanged_confirmed=item.source_unchanged_confirmed,
     )
 
 
@@ -633,6 +654,17 @@ class BatchHistoryItemView(ViewModel):
     status: str
     transaction_id: UUID | None
     reason_detail: str | None
+    filename: str | None
+    """FA-017.3. None only when neither a resolved transaction nor a
+    durable discovery record (via file_id) is available -- honest
+    absence, never guessed. See application.history.BatchHistoryItem."""
+    source_display_path: str | None
+    destination_display_path: str | None
+    undo_available: bool
+    """FA-017.3. Durable evidence permits offering Deshacer -- never a
+    guarantee. See application.history.BatchHistoryItem's field of the
+    same name."""
+    message: UserMessageView
 
 
 class BatchHistoryEntryView(ViewModel):
@@ -667,6 +699,15 @@ def batch_history_entry_view(entry: BatchHistoryEntry) -> BatchHistoryEntryView:
                     if i.reason_code is not None
                     else None
                 ),
+                filename=i.filename,
+                source_display_path=(
+                    str(i.source_path) if i.source_path is not None else None
+                ),
+                destination_display_path=(
+                    str(i.destination_path) if i.destination_path is not None else None
+                ),
+                undo_available=i.undo_available,
+                message=_message_view(es.history_item_message(i)),
             )
             for i in entry.items
         )

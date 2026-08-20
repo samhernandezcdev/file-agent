@@ -294,6 +294,21 @@
           "title": "Policydecisionid",
           "type": "string"
         },
+        "sourceDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sourcedisplaypath"
+        },
+        "sourceUnchangedConfirmed": {
+          "title": "Sourceunchangedconfirmed",
+          "type": "boolean"
+        },
         "status": {
           "title": "Status",
           "type": "string"
@@ -317,8 +332,10 @@
         "filename",
         "status",
         "transactionId",
+        "sourceDisplayPath",
         "destinationDisplayPath",
-        "message"
+        "message",
+        "sourceUnchangedConfirmed"
       ],
       "title": "BatchApplyItemResultView",
       "type": "object"
@@ -556,9 +573,34 @@
     },
     "BatchHistoryItemView": {
       "properties": {
+        "destinationDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Destinationdisplaypath"
+        },
+        "filename": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Filename"
+        },
         "inputIndex": {
           "title": "Inputindex",
           "type": "integer"
+        },
+        "message": {
+          "$ref": "#/$defs/UserMessageView"
         },
         "policyDecisionId": {
           "format": "uuid",
@@ -576,6 +618,17 @@
           ],
           "title": "Reasondetail"
         },
+        "sourceDisplayPath": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Sourcedisplaypath"
+        },
         "status": {
           "title": "Status",
           "type": "string"
@@ -591,6 +644,10 @@
             }
           ],
           "title": "Transactionid"
+        },
+        "undoAvailable": {
+          "title": "Undoavailable",
+          "type": "boolean"
         }
       },
       "required": [
@@ -598,7 +655,12 @@
         "inputIndex",
         "status",
         "transactionId",
-        "reasonDetail"
+        "reasonDetail",
+        "filename",
+        "sourceDisplayPath",
+        "destinationDisplayPath",
+        "undoAvailable",
+        "message"
       ],
       "title": "BatchHistoryItemView",
       "type": "object"
@@ -939,6 +1001,10 @@
           "title": "Filename",
           "type": "string"
         },
+        "needsReviewAction": {
+          "title": "Needsreviewaction",
+          "type": "boolean"
+        },
         "selectable": {
           "title": "Selectable",
           "type": "boolean"
@@ -970,7 +1036,8 @@
         "title",
         "detail",
         "severity",
-        "selectable"
+        "selectable",
+        "needsReviewAction"
       ],
       "title": "PlanItemView",
       "type": "object"

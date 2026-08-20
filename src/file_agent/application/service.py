@@ -73,6 +73,7 @@ from file_agent.domain import (
     RecoveryRejectionCode,
     RecoveryResult,
     RecoveryStatus,
+    RejectionCode,
     RestoreFromVaultRequest,
     ReverseMoveRequest,
     TransactionRequest,
@@ -104,6 +105,7 @@ from file_agent.transaction_engine import (
     TransactionEngine,
     transaction_requested_event,
     transaction_result_event,
+    verify_source_identity,
 )
 
 
@@ -238,18 +240,24 @@ class _ApplyOutcome:
     filename: str | None
     status: ApplicationOutcomeStatus
     transaction_id: UUID | None
+    source_path: Path | None
     destination_path: Path | None
     reason_code: str | None
     reason: str | None
+    source_unchanged_confirmed: bool
+    """FA-017.3. See BatchApplyItemResult's field of the same name for full
+    semantics -- ephemeral, computed fresh in _apply_one, never persisted."""
 
     def to_apply_result(self) -> ApplyResult:
         return ApplyResult(
             self.policy_decision_id,
             self.transaction_id,
             self.status,
+            self.source_path,
             self.destination_path,
             self.reason_code,
             self.reason,
+            self.source_unchanged_confirmed,
         )
 
 
@@ -285,9 +293,11 @@ def _batch_item_result_from_outcome(
         filename=outcome.filename,
         status=_batch_item_status(outcome.status, outcome.reason_code),
         transaction_id=outcome.transaction_id,
+        source_path=outcome.source_path,
         destination_path=outcome.destination_path,
         reason_code=outcome.reason_code,
         reason=outcome.reason,
+        source_unchanged_confirmed=outcome.source_unchanged_confirmed,
     )
 
 
@@ -307,9 +317,11 @@ def _batch_item_result_from_apply_result(
         filename=None,
         status=_batch_item_status(result.status, result.reason_code),
         transaction_id=result.transaction_id,
+        source_path=result.source_path,
         destination_path=result.destination_path,
         reason_code=result.reason_code,
         reason=result.reason,
+        source_unchanged_confirmed=result.source_unchanged_confirmed,
     )
 
 
@@ -329,6 +341,43 @@ def _summarize_batch_items(
         skipped=skipped,
         invalid=invalid,
     )
+
+
+def _verify_source_unchanged_after_failure(
+    request: TransactionRequest, sandbox_root: SandboxRoot
+) -> bool:
+    """FA-017.3. Read-only, best-effort, observational only -- grants no
+    authorization and performs no mutation. Reuses TransactionEngine's own
+    existing verify_source_identity (transaction_engine/preconditions.py)
+    -- the identical full FileHasher-based three-checkpoint identity
+    reverification prepare() already performs (pre-open metadata match,
+    open-vs-pre-open identity, post-read-vs-post-open identity) -- to
+    POSITIVELY confirm the original file's identity, not merely its
+    existence. A freshly-verified sha256 match (a `str` return) is the
+    only True outcome. Any RejectionCode (SOURCE_NOT_FOUND,
+    SOURCE_IDENTITY_CHANGED, SOURCE_HASH_MISMATCH) or any unexpected
+    exception from the check itself yields False. False is never
+    interpreted or rendered as "FileAgent moved/modified it" or "a partial
+    move occurred" -- it means only that the positive claim cannot be
+    made. verify_source_identity's own FileHasher.hash_file is documented
+    as never raising -- "every problem becomes a HashFailure" -- so this
+    try/except exists narrowly for the one remaining, unlikely surface:
+    reconstructing the synthetic DiscoveredFile from the request's own
+    already-once-validated snapshot fields. The catch is scoped to this
+    single call only -- nothing else in _apply_one is affected -- so it
+    cannot mask an unrelated defect elsewhere."""
+    try:
+        outcome = verify_source_identity(request, sandbox_root)
+    except Exception:  # noqa: BLE001 -- narrowly scoped to this one
+        # read-only, best-effort call; converts any surprise failure to
+        # the conservative False, never lets it escape and replace the
+        # already-computed, truthful FAILED apply result.
+        return False
+    # RejectionCode is itself a `str, Enum` subclass -- `isinstance(outcome,
+    # str)` would be True for BOTH outcomes and can never distinguish them.
+    # The only reliable check is the inverse: a RejectionCode member means
+    # verification failed; anything else is the freshly verified sha256.
+    return not isinstance(outcome, RejectionCode)
 
 
 class FileAgentApplicationService:
@@ -881,8 +930,10 @@ class FileAgentApplicationService:
                 ApplicationOutcomeStatus.REJECTED,
                 None,
                 None,
+                None,
                 code,
                 detail,
+                True,
             )
 
         proposal = queries.find_proposal(self._store, policy_decision.proposal_id)
@@ -898,8 +949,10 @@ class FileAgentApplicationService:
                 ApplicationOutcomeStatus.REJECTED,
                 None,
                 None,
+                None,
                 code,
                 detail,
+                True,
             )
 
         if policy_decision.decision is PolicyOutcome.BLOCK:
@@ -911,8 +964,10 @@ class FileAgentApplicationService:
                 ApplicationOutcomeStatus.REJECTED,
                 None,
                 None,
+                None,
                 ApplicationRejectionReason.POLICY_BLOCK.value,
                 "BLOCK cannot be overridden",
+                True,
             )
 
         if policy_decision.decision is PolicyOutcome.AUTO:
@@ -931,8 +986,10 @@ class FileAgentApplicationService:
                     ApplicationOutcomeStatus.REJECTED,
                     None,
                     None,
+                    None,
                     ApplicationRejectionReason.AMBIGUOUS_REVIEW_HISTORY.value,
                     review.detail,
+                    True,
                 )
             if review is None:
                 return _ApplyOutcome(
@@ -943,8 +1000,10 @@ class FileAgentApplicationService:
                     ApplicationOutcomeStatus.REJECTED,
                     None,
                     None,
+                    None,
                     ApplicationRejectionReason.POLICY_REVIEW_WITHOUT_APPROVAL.value,
                     "no effective review recorded for this policy decision",
+                    True,
                 )
             if review.outcome is HumanReviewOutcome.SKIP:
                 return _ApplyOutcome(
@@ -955,8 +1014,10 @@ class FileAgentApplicationService:
                     ApplicationOutcomeStatus.REJECTED,
                     None,
                     None,
+                    None,
                     ApplicationRejectionReason.REVIEW_OUTCOME_IS_SKIP.value,
                     "effective review outcome is SKIP",
+                    True,
                 )
             # outcome is APPROVE -> authorized. This is a SEPARATE
             # authorization fact layered on top of the persisted
@@ -982,8 +1043,10 @@ class FileAgentApplicationService:
                 ApplicationOutcomeStatus.REJECTED,
                 None,
                 None,
+                None,
                 ApplicationRejectionReason.DISCOVERED_FILE_NOT_FOUND.value,
                 f"no DiscoveredFile with id={policy_decision.file_id}",
+                True,
             )
 
         # FA-015 layer 2 (round-1/round-4 design): the actual,
@@ -1001,9 +1064,11 @@ class FileAgentApplicationService:
                 discovered.filename,
                 ApplicationOutcomeStatus.REJECTED,
                 None,
+                discovered.path,
                 None,
                 ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
                 "file has no managed root lineage (pre-FA-015 legacy data)",
+                True,
             )
         root_outcome = self._resolve_active_managed_root(discovered.managed_root_id)
         if isinstance(root_outcome, ManagedRootUnavailable):
@@ -1014,9 +1079,11 @@ class FileAgentApplicationService:
                 discovered.filename,
                 ApplicationOutcomeStatus.REJECTED,
                 None,
+                discovered.path,
                 None,
                 ApplicationRejectionReason.MANAGED_ROOT_NOT_ACTIVE.value,
                 root_outcome.detail,
+                True,
             )
         sandbox_root = root_outcome
 
@@ -1038,9 +1105,11 @@ class FileAgentApplicationService:
                 discovered.filename,
                 ApplicationOutcomeStatus.REJECTED,
                 None,
+                discovered.path,
                 None,
                 ApplicationRejectionReason.STRUCTURALLY_PROTECTED.value,
                 _structural_detail(source_structural_outcome),
+                True,
             )
 
         assert proposal.proposed_destination_category is not None, (
@@ -1075,9 +1144,11 @@ class FileAgentApplicationService:
                 discovered.filename,
                 ApplicationOutcomeStatus.REJECTED,
                 None,
+                discovered.path,
                 destination_path,
                 ApplicationRejectionReason.STRUCTURALLY_PROTECTED.value,
                 _structural_detail(destination_structural_outcome),
+                True,
             )
 
         request = TransactionRequest(
@@ -1117,12 +1188,32 @@ class FileAgentApplicationService:
                 discovered.id,
                 discovered.filename,
                 outcome,
+                # prepare() structurally never mutates -- a static
+                # architectural guarantee, not a per-instance observation,
+                # so no live check is needed here (§Round-2 §11.1).
+                source_unchanged_confirmed=True,
             )
 
         self._store.record_event(transaction_requested_event(request))  # checkpoint
         result = engine.commit(outcome)  # the mutation happens here
+        # FAILED is the one status with no static unchanged-guarantee --
+        # commit()'s own OSError catch performs no post-failure re-check
+        # of its own, so this is the only place that positively verifies
+        # (or honestly fails to verify) source identity for that case.
+        # SUCCEEDED's value is never rendered (product-irrelevant) --
+        # False is used as an inert filler, not a claim.
+        source_unchanged_confirmed = (
+            _verify_source_unchanged_after_failure(request, sandbox_root)
+            if result.status is TransactionStatus.FAILED
+            else False
+        )
         apply_outcome = self._apply_outcome_from_transaction(
-            policy_decision_id, proposal.id, discovered.id, discovered.filename, result
+            policy_decision_id,
+            proposal.id,
+            discovered.id,
+            discovered.filename,
+            result,
+            source_unchanged_confirmed=source_unchanged_confirmed,
         )
         try:
             self._store.record_event(transaction_result_event(result))  # terminal
@@ -1139,6 +1230,8 @@ class FileAgentApplicationService:
         file_id: UUID,
         filename: str,
         result: TransactionResult,
+        *,
+        source_unchanged_confirmed: bool,
     ) -> "_ApplyOutcome":
         if result.status is TransactionStatus.SUCCEEDED:
             return _ApplyOutcome(
@@ -1148,9 +1241,11 @@ class FileAgentApplicationService:
                 filename,
                 ApplicationOutcomeStatus.SUCCEEDED,
                 result.request_id,
+                result.source_path,
                 result.destination_path,
                 None,
                 None,
+                source_unchanged_confirmed,
             )
         if result.status is TransactionStatus.REJECTED:
             return _ApplyOutcome(
@@ -1160,11 +1255,17 @@ class FileAgentApplicationService:
                 filename,
                 ApplicationOutcomeStatus.REJECTED,
                 result.request_id,
-                None,
+                result.source_path,
+                # FA-017.3 fix: TransactionResult.destination_path is
+                # always populated, even for REJECTED (it's a required
+                # field on the domain model) -- previously discarded here
+                # even though the backend had already resolved it.
+                result.destination_path,
                 result.rejection_code.value
                 if result.rejection_code is not None
                 else None,
                 result.failure_reason,
+                source_unchanged_confirmed,
             )
         return _ApplyOutcome(
             policy_decision_id,
@@ -1173,9 +1274,11 @@ class FileAgentApplicationService:
             filename,
             ApplicationOutcomeStatus.FAILED,
             result.request_id,
+            result.source_path,
             None,
             None,
             result.failure_reason,
+            source_unchanged_confirmed,
         )
 
     # --- Undo --------------------------------------------------------------------

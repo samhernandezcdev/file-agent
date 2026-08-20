@@ -12,6 +12,7 @@ string is ever added to a domain enum or engine.
 """
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from file_agent.application.destination_setup import (
     DestinationPreparationOutcome,
@@ -19,6 +20,7 @@ from file_agent.application.destination_setup import (
     DestinationSetupReasonCode,
 )
 from file_agent.application.dto import (
+    ApplicationRejectionReason,
     BatchApplyItemResult,
     BatchApplyItemStatus,
     BatchApplyResult,
@@ -35,12 +37,17 @@ from file_agent.application.errors import (
     SystemDirectoryManagedRootError,
     UserProfileManagedRootError,
 )
-from file_agent.application.history import BatchHistoryEntry, UnavailableBatchHistoryRow
+from file_agent.application.history import (
+    BatchHistoryEntry,
+    BatchHistoryItem,
+    UnavailableBatchHistoryRow,
+)
 from file_agent.application.managed_roots import (
     ManagedRootLookupStatus,
     ManagedRootUnavailable,
 )
 from file_agent.application.organization_plan import OrganizationPlanItem, PlanStatus
+from file_agent.domain import RejectionCode
 from file_agent.presentation.messages import Severity, SuggestedAction, UserMessage
 from file_agent.structural_safety import StructuralProtection
 
@@ -59,10 +66,15 @@ _PLAN_STATUS_LABEL: dict[PlanStatus, str] = {
 
 _BATCH_ITEM_STATUS_LABEL: dict[BatchApplyItemStatus, str] = {
     BatchApplyItemStatus.APPLIED: "Organizado",
-    BatchApplyItemStatus.NOT_APPLIED: "No se movió",
-    BatchApplyItemStatus.SKIPPED: "Omitido",
+    BatchApplyItemStatus.NOT_APPLIED: "No se organizó",
+    BatchApplyItemStatus.SKIPPED: "No se organizó",
     BatchApplyItemStatus.INVALID: "No se pudo confirmar",
 }
+
+# FA-017.3: a NOT_APPLIED item whose reason is "the file is already at its
+# destination" earns a distinct, more accurate title than the generic
+# "No se organizó" -- nothing went wrong, nothing was needed.
+_ALREADY_AT_DESTINATION_TITLE = "No fue necesario moverlo"
 
 
 def plan_status_label(status: PlanStatus) -> str:
@@ -95,17 +107,14 @@ _REASON_DETAIL: dict[str, str] = {
     ),
     "no_destination_proposed": "No estamos seguros de dónde debería ir este archivo.",
     "source_already_at_destination": "Este archivo ya está organizado.",
+    "source_equals_destination": "El archivo ya estaba en su destino.",
     "filesystem_state_uncertain": "No pudimos comprobar esta ubicación de forma segura.",
     "destination_observation_failed": (
         "No pudimos comprobar esta ubicación de forma segura."
     ),
     "policy_block": "FileAgent decidió no mover este archivo por seguridad.",
-    "ambiguous_review_history": (
-        "No pudimos confirmar el estado de este archivo. No se hizo ningún cambio."
-    ),
-    "malformed_event_payload": (
-        "No pudimos confirmar el estado de este archivo. No se hizo ningún cambio."
-    ),
+    "ambiguous_review_history": "No pudimos confirmar el estado de este archivo.",
+    "malformed_event_payload": "No pudimos confirmar el estado de este archivo.",
     "human_skipped": "Se omitió este archivo a tu pedido.",
     "review_outcome_is_skip": "Se omitió este archivo a tu pedido.",
     "destination_parent_missing": "La carpeta de destino no existe todavía.",
@@ -142,10 +151,14 @@ _REASON_DETAIL: dict[str, str] = {
     "structurally_protected": "Esta carpeta está protegida y no se organizará.",
 }
 
-_FALLBACK_DETAIL = (
-    "No pudimos completar esta acción de forma segura. "
-    "No se realizó ningún cambio en este archivo."
-)
+# FA-017.3: deliberately does NOT claim "no change was made" -- unlike
+# Round 1's version of this constant, this fallback is also reached by a
+# FAILED apply's free-text failure_reason (never a _REASON_DETAIL key), for
+# which "no change" is not a guaranteed fact (see
+# _reason_code_guarantees_source_unchanged below). The unchanged/
+# unconfirmed claim is always composed separately, by the caller, never
+# baked into this shared reason-explanation text.
+_FALLBACK_DETAIL = "No pudimos completar esta acción de forma segura."
 
 # reason_codes that mean "the file itself changed since it was last
 # analyzed" -- the one case that gets a REANALYZE suggested_action rather
@@ -153,6 +166,32 @@ _FALLBACK_DETAIL = (
 _SOURCE_CHANGED_CODES = frozenset(
     {"source_identity_changed", "source_hash_mismatch", "source_not_found"}
 )
+
+# FA-017.3: the closed set of reason_code values that can ONLY ever be
+# produced strictly before any TransactionEngine mutation -- RejectionCode
+# is exclusively prepare()'s own vocabulary (commit() never produces one;
+# its only failure mode is a free-text failure_reason), and
+# ApplicationRejectionReason covers only the pre-engine lookup/policy/
+# review checks in _apply_one. A reason_code in this set is architectural
+# proof (not a per-instance observation) that the source was never
+# touched.
+_PRE_COMMIT_REASON_CODES: frozenset[str] = frozenset(
+    {member.value for member in RejectionCode}
+    | {member.value for member in ApplicationRejectionReason}
+)
+
+_UNCHANGED_SENTENCE = "Tu archivo original no se modificó."
+_UNCONFIRMED_SENTENCE = "No pudimos confirmar el estado final del archivo."
+
+
+def _reason_code_guarantees_source_unchanged(reason_code: str | None) -> bool:
+    """True only when reason_code is a member of the closed pre-commit
+    vocabularies (see _PRE_COMMIT_REASON_CODES). A free-text OS
+    failure_reason (the FAILED case) or any future/unrecognized code is
+    never a member, and correctly returns False -- "not durably
+    provable," never "FileAgent changed it." Never touches the
+    filesystem; a pure function of already-known/persisted data."""
+    return reason_code is not None and reason_code in _PRE_COMMIT_REASON_CODES
 
 
 def rejection_reason_detail(reason_code: str | None) -> str:
@@ -216,28 +255,114 @@ _BATCH_ITEM_STATUS_SEVERITY: dict[BatchApplyItemStatus, Severity] = {
     BatchApplyItemStatus.INVALID: Severity.ERROR,
 }
 
-_BATCH_ITEM_APPLIED_DETAIL = "Este archivo se organizó correctamente."
+_BATCH_ITEM_APPLIED_DETAIL_FALLBACK = "Este archivo se organizó correctamente."
+"""Used only in the defensive/should-not-happen case where an APPLIED
+result somehow carries no destination_path."""
 
 
-def batch_item_message(item: BatchApplyItemResult) -> UserMessage:
-    severity = _BATCH_ITEM_STATUS_SEVERITY[item.status]
+_FAILED_MOVE_DETAIL = "No pudimos completar el movimiento."
+
+
+def _applied_result_detail(destination_path: Path | None) -> str:
+    if destination_path is None:
+        return _BATCH_ITEM_APPLIED_DETAIL_FALLBACK
+    return f"Se movió a {destination_path}."
+
+
+def _applied_history_detail(
+    source_path: Path | None, destination_path: Path | None
+) -> str:
+    if source_path is None or destination_path is None:
+        return _BATCH_ITEM_APPLIED_DETAIL_FALLBACK
+    return f"Se movió de {source_path} a {destination_path}."
+
+
+def _batch_item_title_and_severity(
+    status: BatchApplyItemStatus, reason_code: str | None
+) -> tuple[str, Severity, SuggestedAction]:
+    """Shared by both composers below (FA-017.3 Major 3: shared LOWER-LEVEL
+    wording is fine; only the unchanged/unconfirmed sentence -- which needs
+    facts each composer has access to differently -- is not shared)."""
+    severity = _BATCH_ITEM_STATUS_SEVERITY[status]
     suggested_action = SuggestedAction.NONE
+    title = batch_item_status_label(status)
     if (
-        item.status is BatchApplyItemStatus.NOT_APPLIED
-        and item.reason_code in _SOURCE_CHANGED_CODES
+        status is BatchApplyItemStatus.NOT_APPLIED
+        and reason_code == RejectionCode.SOURCE_EQUALS_DESTINATION.value
     ):
+        title = _ALREADY_AT_DESTINATION_TITLE
+    if reason_code in _SOURCE_CHANGED_CODES:
         severity = Severity.ERROR
         suggested_action = SuggestedAction.REANALYZE
-    detail = (
-        rejection_reason_detail(item.reason_code)
-        if item.reason_code is not None
-        else _BATCH_ITEM_APPLIED_DETAIL
+    return title, severity, suggested_action
+
+
+def batch_item_result_message(
+    item: BatchApplyItemResult, *, source_unchanged_confirmed: bool
+) -> UserMessage:
+    """FA-017.3 execution-time composer (Major 3) -- may consume the
+    ephemeral source_unchanged_confirmed fact this apply call itself just
+    observed (never persisted; see history_item_message below, which
+    structurally cannot receive it)."""
+    if item.status is BatchApplyItemStatus.APPLIED:
+        return UserMessage(
+            title=batch_item_status_label(item.status),
+            detail=_applied_result_detail(item.destination_path),
+            severity=_BATCH_ITEM_STATUS_SEVERITY[item.status],
+            suggested_action=SuggestedAction.NONE,
+        )
+    title, severity, suggested_action = _batch_item_title_and_severity(
+        item.status, item.reason_code
+    )
+    # item.reason_code is None only for FAILED (never APPLIED, handled
+    # above) -- every other non-APPLIED status always carries a real code.
+    base_detail = (
+        _FAILED_MOVE_DETAIL
+        if item.reason_code is None
+        else rejection_reason_detail(item.reason_code)
+    )
+    unchanged_sentence = (
+        _UNCHANGED_SENTENCE if source_unchanged_confirmed else _UNCONFIRMED_SENTENCE
     )
     return UserMessage(
-        title=batch_item_status_label(item.status),
-        detail=detail,
+        title=title,
+        detail=f"{base_detail} {unchanged_sentence}",
         severity=severity,
         suggested_action=suggested_action,
+    )
+
+
+def history_item_message(item: BatchHistoryItem) -> UserMessage:
+    """FA-017.3 durable-history composer (Major 3) -- consumes ONLY the
+    durably-reconstructed BatchHistoryItem; has no parameter through which
+    an ephemeral execution-time fact could arrive (EXECUTION MESSAGE !=
+    HISTORY MESSAGE, structurally, not by convention). Where History
+    reaches the same "source unchanged" conclusion Result did, it does so
+    by independently re-deriving from a static code guarantee
+    (_reason_code_guarantees_source_unchanged), never by consuming
+    anything Result computed and discarded. Never touches the filesystem."""
+    if item.status is BatchApplyItemStatus.APPLIED:
+        return UserMessage(
+            title=batch_item_status_label(item.status),
+            detail=_applied_history_detail(item.source_path, item.destination_path),
+            severity=_BATCH_ITEM_STATUS_SEVERITY[item.status],
+            suggested_action=SuggestedAction.NONE,
+        )
+    title, severity, suggested_action = _batch_item_title_and_severity(
+        item.status, item.reason_code
+    )
+    base_detail = rejection_reason_detail(item.reason_code)
+    if _reason_code_guarantees_source_unchanged(item.reason_code):
+        detail = f"{base_detail} {_UNCHANGED_SENTENCE}"
+    else:
+        # Durable evidence doesn't prove the unchanged claim either way
+        # (a free-text failure_reason, or an unrecognized/future code) --
+        # History deliberately says less than Result may have (§Major 3):
+        # it never restates an execution-time-only observation it cannot
+        # itself prove.
+        detail = base_detail
+    return UserMessage(
+        title=title, detail=detail, severity=severity, suggested_action=suggested_action
     )
 
 

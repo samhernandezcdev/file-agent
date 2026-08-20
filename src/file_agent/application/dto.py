@@ -120,9 +120,13 @@ class ApplyResult:
     policy_decision_id: UUID
     transaction_id: UUID | None
     status: ApplicationOutcomeStatus
+    source_path: Path | None
     destination_path: Path | None
     reason_code: str | None
     reason: str | None
+    source_unchanged_confirmed: bool
+    """FA-017.3. See BatchApplyItemResult's identical field for full
+    semantics."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -179,10 +183,24 @@ class BatchApplyItemResult:
     status: BatchApplyItemStatus
     transaction_id: UUID | None
     """Present iff a TransactionEngine result exists for this id."""
+    source_path: Path | None
+    """FA-017.3. Known once `discovered`/the transaction request resolves
+    (most cases); None only for the handful of rejections that precede
+    that resolution (policy_decision/proposal lookup failures)."""
     destination_path: Path | None
     reason_code: str | None
     """None iff status is APPLIED."""
     reason: str | None
+    source_unchanged_confirmed: bool
+    """FA-017.3. True means FileAgent has positive evidence the expected
+    original source file is still present, unchanged, at its original
+    location. False means that positive claim cannot be made -- NEVER
+    interpreted as "FileAgent moved/modified it" or "a partial move
+    occurred"; it means only that no such confirmation exists. Ephemeral --
+    computed fresh per apply call, never persisted (see
+    application/history.py's own, durable-only reconstruction). Not
+    product-relevant for a SUCCEEDED/APPLIED result and must not be
+    rendered there."""
 
 
 @dataclass(frozen=True, slots=True)

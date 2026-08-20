@@ -33,6 +33,7 @@ from file_agent.transaction_engine.engine import (
     transaction_result_event,
 )
 from file_agent.transaction_engine.errors import InvalidPreparedMoveError
+from file_agent.transaction_engine.preconditions import verify_source_identity
 from file_agent.transaction_engine.rules import TRANSACTION_ENGINE_ID
 
 __all__ = [
@@ -41,4 +42,5 @@ __all__ = [
     "TransactionEngine",
     "transaction_requested_event",
     "transaction_result_event",
+    "verify_source_identity",
 ]

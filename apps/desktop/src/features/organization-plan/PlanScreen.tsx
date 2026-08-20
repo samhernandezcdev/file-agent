@@ -351,7 +351,7 @@ export function PlanScreen({
                 trailing={
                   <div className="flex items-center gap-3">
                     <StatusBadge status={item.status} label={item.title} />
-                    {item.status === "review_required" ? (
+                    {item.needsReviewAction ? (
                       <>
                         <Button onClick={() => approve.mutate(item.actionId)} disabled={approve.isPending}>
                           Aprobar

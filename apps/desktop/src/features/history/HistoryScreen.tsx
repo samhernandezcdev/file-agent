@@ -36,19 +36,25 @@ function BatchDetail({ batchId }: { batchId: string }) {
       ) : null}
       <ul className="mt-2 flex flex-col gap-1">
         {(entry.items ?? []).map((item) => (
-          <li key={item.policyDecisionId} className="flex items-center justify-between py-1 text-sm">
-            <span className="text-foreground-muted">{item.status}</span>
-            {item.status === "applied" && item.transactionId ? (
-              <AlertDialog
-                trigger={<Button icon={<RotateCcw size={14} />}>Deshacer</Button>}
-                title="¿Deshacer este cambio?"
-                description="El archivo volverá a su carpeta original."
-                cancelLabel="Cancelar"
-                confirmLabel="Sí, deshacer"
-                confirmVariant="danger"
-                onConfirm={() => undoMutation.mutate(item.transactionId as string)}
-              />
-            ) : null}
+          <li key={item.policyDecisionId} className="flex flex-col gap-0.5 py-1 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-foreground">
+                {item.filename ?? "No pudimos identificar este archivo."}
+              </span>
+              {item.undoAvailable && item.transactionId ? (
+                <AlertDialog
+                  trigger={<Button icon={<RotateCcw size={14} />}>Deshacer</Button>}
+                  title="¿Deshacer este cambio?"
+                  description="El archivo volverá a su carpeta original."
+                  cancelLabel="Cancelar"
+                  confirmLabel="Sí, deshacer"
+                  confirmVariant="danger"
+                  onConfirm={() => undoMutation.mutate(item.transactionId as string)}
+                />
+              ) : null}
+            </div>
+            <span className="text-foreground-muted">{item.message.title}</span>
+            <span className="text-xs text-foreground-subtle">{item.message.detail}</span>
           </li>
         ))}
       </ul>

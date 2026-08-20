@@ -43,6 +43,8 @@ export type Destinationdisplaypath1 = string | null;
 export type Filename1 = string | null;
 export type Inputindex = number;
 export type Policydecisionid3 = string;
+export type Sourcedisplaypath2 = string | null;
+export type Sourceunchangedconfirmed = boolean;
 export type Status1 = string;
 export type Transactionid1 = string | null;
 export type Batchid = string;
@@ -63,11 +65,15 @@ export type Batchid1 = string;
 export type Completedat1 = string | null;
 export type Invalidcount = number;
 export type Items2 = BatchHistoryItemView[] | null;
+export type Destinationdisplaypath2 = string | null;
+export type Filename2 = string | null;
 export type Inputindex1 = number;
 export type Policydecisionid4 = string;
 export type Reasondetail = string | null;
+export type Sourcedisplaypath3 = string | null;
 export type Status3 = string;
 export type Transactionid2 = string | null;
+export type Undoavailable = boolean;
 export type Managedrootid2 = string | null;
 export type Notappliedcount = number;
 export type Outcome2 = "found";
@@ -112,12 +118,13 @@ export type Variant = "missing_destination_folder";
 export type Policydecisionids1 = string[];
 export type Actionid = string;
 export type Categorylabel2 = string;
-export type Destinationdisplaypath2 = string | null;
+export type Destinationdisplaypath3 = string | null;
 export type Detail1 = string;
-export type Filename2 = string;
+export type Filename3 = string;
+export type Needsreviewaction = boolean;
 export type Selectable = boolean;
 export type Severity1 = string;
-export type Sourcedisplaypath2 = string;
+export type Sourcedisplaypath4 = string;
 export type Status7 = string;
 export type Title1 = string;
 export type Blocked = number;
@@ -255,6 +262,8 @@ export interface BatchApplyItemResultView {
   inputIndex: Inputindex;
   message: UserMessageView;
   policyDecisionId: Policydecisionid3;
+  sourceDisplayPath: Sourcedisplaypath2;
+  sourceUnchangedConfirmed: Sourceunchangedconfirmed;
   status: Status1;
   transactionId: Transactionid1;
 }
@@ -295,11 +304,16 @@ export interface BatchHistoryEntryView {
   summaryMessage: UserMessageView;
 }
 export interface BatchHistoryItemView {
+  destinationDisplayPath: Destinationdisplaypath2;
+  filename: Filename2;
   inputIndex: Inputindex1;
+  message: UserMessageView;
   policyDecisionId: Policydecisionid4;
   reasonDetail: Reasondetail;
+  sourceDisplayPath: Sourcedisplaypath3;
   status: Status3;
   transactionId: Transactionid2;
+  undoAvailable: Undoavailable;
 }
 export interface DestinationSetupItemResultView {
   destinationCategory: DestinationCategory;
@@ -376,12 +390,13 @@ export interface PlanCreateParams {
 export interface PlanItemView {
   actionId: Actionid;
   categoryLabel: Categorylabel2;
-  destinationDisplayPath: Destinationdisplaypath2;
+  destinationDisplayPath: Destinationdisplaypath3;
   detail: Detail1;
-  filename: Filename2;
+  filename: Filename3;
+  needsReviewAction: Needsreviewaction;
   selectable: Selectable;
   severity: Severity1;
-  sourceDisplayPath: Sourcedisplaypath2;
+  sourceDisplayPath: Sourcedisplaypath4;
   status: Status7;
   title: Title1;
 }
