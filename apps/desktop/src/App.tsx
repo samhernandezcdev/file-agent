@@ -233,7 +233,16 @@ function App() {
       : null;
 
   return (
-    <div className="flex min-h-screen bg-background">
+    // FA-017.6 Part 11/12: min-h-screen only guaranteed the shell was AT
+    // LEAST one viewport tall -- with no ancestor giving it a definite
+    // (capped) height, a long Plan file list simply grew the whole
+    // shell taller than the viewport, so `main`'s own overflow-y-auto
+    // below never actually engaged (nothing bounded it), and the real
+    // scroll ancestor was the document itself -- taking Sidebar along
+    // with it. h-screen + overflow-hidden caps the shell at exactly one
+    // viewport; `main` is now the app's one real, intentional scroll
+    // ancestor.
+    <div className="flex h-screen overflow-hidden bg-background">
       <Sidebar
         active={screen.name === "history" || screen.name === "historyDetail" ? "historial" : "carpetas"}
         onNavigate={navigate}

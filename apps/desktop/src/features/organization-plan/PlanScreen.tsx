@@ -205,6 +205,13 @@ export function PlanScreen({
     planQuery.data?.outcome === "ok" && planQuery.data.result.outcome === "ok"
       ? planQuery.data.result.attentions
       : [];
+  // FA-017.6 Part 16: the same authoritative field the plan already
+  // carries (PlanView.rootDisplayPath) -- no new backend fact, no prop
+  // threading from App.tsx needed.
+  const rootDisplayPath: string | null =
+    planQuery.data?.outcome === "ok" && planQuery.data.result.outcome === "ok"
+      ? planQuery.data.result.rootDisplayPath
+      : null;
   const attentionsByCategory = new Map<string, PlanAttentionView[]>();
   for (const attention of attentions) {
     const list = attentionsByCategory.get(attention.categoryLabel);
@@ -273,6 +280,26 @@ export function PlanScreen({
   // item is selected (by this checkbox or any individual row checkbox).
   const selectAllIsPrimary = selectableIds.length > 0 && !planIsInvalidated && selected.size === 0;
 
+  // FA-017.6 Part 13/16: the compact sticky context bar's content -- a
+  // pure function of already-existing render-time facts (planLoaded,
+  // planIsInvalidated, reanalyzing, selectableIds, attentions,
+  // rootDisplayPath), never a new derived-from-raw-enum condition, never
+  // scroll-position-dependent. null means the bar renders nothing this
+  // render (no plan facts yet, or nothing left in this state to
+  // summarize -- NOTHING_ACTIONABLE never reaches this point at all,
+  // it already returned its own EmptyState above).
+  const contextBarText: string | null = !planLoaded
+    ? null
+    : planIsInvalidated
+      ? "Analiza de nuevo para actualizar esta vista"
+      : reanalyzing
+        ? "Analizando de nuevo…"
+        : `${rootDisplayPath ?? "Vista previa"} · ${selectableIds.length} listo${selectableIds.length === 1 ? "" : "s"}${
+            attentions.length > 0
+              ? ` · ${attentions.length} ${attentions.length === 1 ? "necesita" : "necesitan"} atención`
+              : ""
+          }`;
+
   function handleApply() {
     const ids = [...selected];
     // Synchronous: `selected` becomes empty in THIS render, so the
@@ -282,8 +309,27 @@ export function PlanScreen({
     applyItems.mutate(ids);
   }
 
+  // FA-017.6 Remediation 2: `selected` is pre-submit UI selection and must
+  // keep clearing synchronously on submit (double-submit safety, above --
+  // unchanged). But the action surface's displayed count during a known
+  // pending apply must come from the exact submitted request, not from
+  // `selected` (which is already 0 by then). TanStack Query's mutation
+  // result already carries the exact array passed to `.mutate()` in
+  // `.variables` for as long as that call remains pending/settled (reset
+  // only by a new `.mutate()` call) -- reusing it needs no new React
+  // state and cannot drift from what was actually submitted.
+  const submittedCount = applyItems.variables?.length ?? 0;
+  const actionCount = applyItems.isPending ? submittedCount : selected.size;
+  const showActionFooter = selected.size > 0 || applyItems.isPending;
+
   return (
-    <section aria-labelledby="plan-heading">
+    <section
+      aria-labelledby="plan-heading"
+      // FA-017.6 Part 23 / Remediation 2: reserves room below the last
+      // file row so the sticky footer -- now also mounted through a known
+      // pending apply -- never covers it.
+      className={showActionFooter ? "pb-16" : undefined}
+    >
       <h1 id="plan-heading" className="mb-3 text-xl font-semibold text-foreground">
         Vista previa de organización
       </h1>
@@ -319,8 +365,8 @@ export function PlanScreen({
         <div className="mb-4">
           <Banner
             severity="attention"
-            title="Este plan ya no está actualizado."
-            detail="FileAgent preparó carpetas de destino desde la última vez que se analizó esta carpeta. Analiza de nuevo para ver el estado actual antes de organizar."
+            title="Las carpetas están listas."
+            detail="Analiza de nuevo para revisar el plan actualizado."
             action={
               <Button variant="primary" onClick={handleReanalyze} loading={reanalyzing}>
                 {reanalyzing ? "Analizando de nuevo…" : "Analizar de nuevo"}
@@ -395,6 +441,19 @@ export function PlanScreen({
         </p>
       ) : null}
 
+      {/* FA-017.6 Part 13/14: plain in-flow content, position: sticky only
+          -- always in the DOM for an applicable state, never mounted/
+          unmounted based on scroll, zero JS scroll tracking of any kind.
+          It naturally sits here, below the full AnalysisSummary/banners/
+          select-all row, and only visually reaches the top of main's
+          scroll box once the user has scrolled past everything above
+          it. */}
+      {contextBarText !== null ? (
+        <div className="sticky top-0 z-10 -mx-8 border-b border-border bg-surface px-8 py-2">
+          <p className="text-sm font-medium text-foreground">{contextBarText}</p>
+        </div>
+      ) : null}
+
       <div aria-label="Archivos analizados">
         {groupByCategory(planItems).map(([categoryLabel, items]) => (
           <div key={categoryLabel}>
@@ -450,7 +509,7 @@ export function PlanScreen({
                       </>
                     ) : null}
                     <Collapsible triggerLabel="Ver ubicación">
-                      <p className="text-xs text-foreground-subtle">Origen: {item.sourceDisplayPath}</p>
+                      <p className="text-sm text-foreground-subtle">Origen: {item.sourceDisplayPath}</p>
                       {item.destinationDisplayPath ? (
                         <DestinationLabel label={`Destino: ${item.destinationDisplayPath}`} />
                       ) : null}
@@ -481,23 +540,40 @@ export function PlanScreen({
       ) : null}
 
       {selected.size > 0 ? (
+        // FA-017.6 Part 21: text only, no button here -- ONE USER INTENT
+        // -> ONE INTERACTIVE CONTROL. The sole "Organizar" button lives
+        // in the sticky footer below.
         <div className="mt-6 border-t border-border pt-4">
-          <p className="mb-2 text-sm text-foreground-muted">
+          <p className="text-sm text-foreground-muted">
             {selected.size} archivo{selected.size === 1 ? "" : "s"} se moverá
             {selected.size === 1 ? "" : "n"} · 0 archivos se eliminarán · Puedes deshacer los cambios
+          </p>
+        </div>
+      ) : null}
+
+      {/* FA-017.6 Part 18-21 / Remediation 2: sticky action footer, the
+          sole "Organizar"/"Organizando…" control in the DOM. Renders
+          while selected>0 (Part 19 -- no footer, no button, while
+          nothing is selected; the promoted "Seleccionar todos los
+          listos" row above remains the sole primary action in that
+          state) OR while a submitted apply is still known-pending, so
+          the action surface never disappears out from under the user
+          between click and the mutation settling. */}
+      {showActionFooter ? (
+        <div className="sticky bottom-0 z-10 -mx-8 flex items-center justify-between gap-4 border-t border-border bg-surface px-8 py-2">
+          <p className="text-sm text-foreground-muted">
+            {actionCount} seleccionado{actionCount === 1 ? "" : "s"} · 0 se eliminarán
           </p>
           <Button
             variant="primary"
             onClick={handleApply}
             disabled={applyItems.isPending || planIsInvalidated}
+            loading={applyItems.isPending}
           >
-            Organizar {selected.size} archivo{selected.size === 1 ? "" : "s"}
+            {applyItems.isPending
+              ? "Organizando…"
+              : `Organizar ${actionCount} archivo${actionCount === 1 ? "" : "s"}`}
           </Button>
-          {applyItems.isPending ? (
-            <div className="mt-2">
-              <Progress label="Organizando…" />
-            </div>
-          ) : null}
         </div>
       ) : null}
     </section>

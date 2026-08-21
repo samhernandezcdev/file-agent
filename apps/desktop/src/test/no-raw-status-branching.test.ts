@@ -96,4 +96,26 @@ describe("no raw product-status/reason-code branching in React", () => {
       expect(source).not.toMatch(/\brecoveryState\b/);
     }
   });
+
+  // FA-017.6 Design Round 3 (R3-1.E/F): the compact context bar and sticky
+  // action footer are plain CSS `position: sticky`, always in the DOM --
+  // zero scroll listeners, zero IntersectionObserver, zero scroll-position
+  // React state. A static source check, since jsdom (used by every other
+  // PlanScreen test) does not compute real sticky/scroll geometry, so this
+  // is the correct place to prove the "no scroll JS" architectural
+  // guarantee rather than a behavioral one.
+  it("PlanScreen introduces no scroll listener, IntersectionObserver, or scroll-tracking state for its sticky surfaces", () => {
+    const source = readSource("features/organization-plan/PlanScreen.tsx");
+    // Comment lines are exempt -- this file's own docstrings document the
+    // absence of these patterns, which would otherwise trip a naive
+    // whole-file match (same comment-skipping discipline the forbidden-
+    // pattern check above already uses).
+    const codeOnly = source
+      .split("\n")
+      .filter((line) => !/^\s*(\*|\/\/)/.test(line))
+      .join("\n");
+    expect(codeOnly).not.toMatch(/addEventListener\(\s*["']scroll["']/);
+    expect(codeOnly).not.toMatch(/IntersectionObserver/);
+    expect(codeOnly).not.toMatch(/scrollY|scrollTop|getBoundingClientRect/);
+  });
 });

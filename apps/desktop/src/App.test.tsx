@@ -554,7 +554,7 @@ describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () =>
     // non-authoritative in this same mount, before any navigation.
     await userEvent.click(await screen.findByRole("button", { name: "Preparar carpeta" }));
     await screen.findByText("Documents — Preparada");
-    expect(screen.getByText("Este plan ya no está actualizado.")).toBeInTheDocument();
+    expect(screen.getByText("Las carpetas están listas.")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
 
     // Navigate away, then back to the SAME managed root.
@@ -563,7 +563,7 @@ describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () =>
 
     // Plan A must not resurrect as actionable on remount, and remounting
     // must not have triggered a second, automatic analysis.run call.
-    await screen.findByText("Este plan ya no está actualizado.");
+    await screen.findByText("Las carpetas están listas.");
     expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Organizar 1 archivo/ })).not.toBeInTheDocument();
     expect(analysisCallCount).toBe(1);
@@ -573,7 +573,7 @@ describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () =>
 
     await waitFor(() => expect(analysisCallCount).toBe(2));
     expect(await screen.findByRole("checkbox", { name: "Seleccionar invoice.pdf" })).toBeInTheDocument();
-    expect(screen.queryByText("Este plan ya no está actualizado.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Las carpetas están listas.")).not.toBeInTheDocument();
   });
 
   const PLAN_RESULT_WITH_TWO_ATTENTIONS = {
@@ -670,7 +670,7 @@ describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () =>
     await userEvent.click(await screen.findByRole("button", { name: "Preparar 2 carpetas" }));
     await screen.findByText("Documents — Preparada");
 
-    expect(screen.getByText("Este plan ya no está actualizado.")).toBeInTheDocument();
+    expect(screen.getByText("Las carpetas están listas.")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Carpetas" }));
@@ -678,7 +678,7 @@ describe("App -- destination setup cross-navigation lifecycle (FA-017.2)", () =>
 
     // Still gated after remount, and the partial (not fully successful)
     // result never triggered a second, automatic analysis.run either.
-    await screen.findByText("Este plan ya no está actualizado.");
+    await screen.findByText("Las carpetas están listas.");
     expect(screen.queryByRole("checkbox", { name: "Seleccionar invoice.pdf" })).not.toBeInTheDocument();
     expect(analysisCallCount).toBe(1);
 

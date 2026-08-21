@@ -32,7 +32,7 @@ describe("ManagedRootsScreen", () => {
   it("shows the empty state when there are no managed roots", async () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     renderScreen();
-    expect(await screen.findByText(/organiza una carpeta con fileagent/i)).toBeInTheDocument();
+    expect(await screen.findByText(/organiza tus archivos sin perder el control/i)).toBeInTheDocument();
   });
 
   it("renders roots and marks an unavailable one distinctly", async () => {
@@ -56,9 +56,9 @@ describe("ManagedRootsScreen", () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     vi.mocked(open).mockResolvedValue(null);
     renderScreen();
-    await screen.findByText(/organiza una carpeta con fileagent/i);
+    await screen.findByText(/organiza tus archivos sin perder el control/i);
 
-    await userEvent.click(screen.getByRole("button", { name: "Elegir una carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Elegir carpeta" }));
 
     expect(open).toHaveBeenCalledWith({ directory: true, multiple: false });
   });
@@ -67,9 +67,9 @@ describe("ManagedRootsScreen", () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     vi.mocked(open).mockResolvedValue(null);
     renderScreen();
-    await screen.findByText(/organiza una carpeta con fileagent/i);
+    await screen.findByText(/organiza tus archivos sin perder el control/i);
 
-    await userEvent.click(screen.getByRole("button", { name: "Elegir una carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Elegir carpeta" }));
 
     await waitFor(() => {
       // Only the initial managed_roots.list call happened -- no
@@ -87,9 +87,9 @@ describe("ManagedRootsScreen", () => {
     vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
     vi.mocked(open).mockResolvedValue("C:/Users/Ana/Descargas");
     renderScreen();
-    await screen.findByText(/organiza una carpeta con fileagent/i);
+    await screen.findByText(/organiza tus archivos sin perder el control/i);
 
-    await userEvent.click(screen.getByRole("button", { name: "Elegir una carpeta" }));
+    await userEvent.click(screen.getByRole("button", { name: "Elegir carpeta" }));
 
     await waitFor(() => {
       const addCall = vi
@@ -102,5 +102,159 @@ describe("ManagedRootsScreen", () => {
         "C:/Users/Ana/Descargas",
       );
     });
+  });
+});
+
+describe("ManagedRootsScreen -- first-run hero (FA-017.6)", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(open).mockReset();
+    vi.mocked(invoke).mockResolvedValue({ outcome: "ok", result: { roots: [] } });
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("shows the exact final short explanation", async () => {
+    renderScreen();
+    expect(
+      await screen.findByText(
+        "Elige una carpeta. FileAgent analizará los archivos y te mostrará los cambios antes de organizar.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("renders exactly 3 non-interactive workflow stages with the exact labels", async () => {
+    renderScreen();
+    await screen.findByText("Organiza tus archivos sin perder el control");
+
+    for (const label of ["Elige una carpeta", "Revisa los cambios", "Organiza"]) {
+      const stage = screen.getByText(label);
+      expect(stage.closest("button")).toBeNull();
+      expect(stage.closest('[role="button"]')).toBeNull();
+    }
+  });
+
+  it("renders exactly 3 trust statements with the exact final copy", async () => {
+    renderScreen();
+    await screen.findByText("Organiza tus archivos sin perder el control");
+
+    const list = screen.getByText(/Revisa antes de organizar/).closest("ul") as HTMLElement;
+    expect(list.children).toHaveLength(3);
+    expect(screen.getByText(/Revisa antes de organizar/)).toBeInTheDocument();
+    expect(screen.getByText(/No reemplazamos archivos existentes/)).toBeInTheDocument();
+    expect(screen.getByText(/Puedes deshacer cambios/)).toBeInTheDocument();
+  });
+
+  it("'Elegir carpeta' is the sole dominant action on the hero", async () => {
+    renderScreen();
+    await screen.findByText("Organiza tus archivos sin perder el control");
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Elegir carpeta" })).toBeInTheDocument();
+  });
+
+  it("hero disappears once a root exists", async () => {
+    vi.mocked(invoke).mockResolvedValue({
+      outcome: "ok",
+      result: { roots: [{ id: "a", displayPath: "C:/Descargas", status: "available" }] },
+    });
+    renderScreen();
+    await screen.findByText("C:/Descargas");
+    expect(
+      screen.queryByText("Organiza tus archivos sin perder el control"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("introduces no localStorage or sessionStorage usage", async () => {
+    const setLocal = vi.spyOn(Storage.prototype, "setItem");
+    const getLocal = vi.spyOn(Storage.prototype, "getItem");
+    renderScreen();
+    await screen.findByText("Organiza tus archivos sin perder el control");
+    await userEvent.click(screen.getByRole("button", { name: "Elegir carpeta" }));
+    expect(setLocal).not.toHaveBeenCalled();
+    expect(getLocal).not.toHaveBeenCalled();
+    setLocal.mockRestore();
+    getLocal.mockRestore();
+  });
+});
+
+describe("ManagedRootsScreen -- root row action hierarchy (FA-017.6)", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    vi.mocked(open).mockReset();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  function mockOneRoot() {
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") {
+        return {
+          outcome: "ok",
+          result: { roots: [{ id: "root-1", displayPath: "C:/Descargas", status: "available" }] },
+        };
+      }
+      return { outcome: "ok", result: {} };
+    });
+  }
+
+  it("'Analizar' is the only primary-styled action in the row", async () => {
+    mockOneRoot();
+    renderScreen();
+    await screen.findByText("C:/Descargas");
+    const analyzeButton = screen.getByRole("button", { name: "Analizar" });
+    expect(analyzeButton.className).toContain("bg-primary");
+    const removeButton = screen.getByRole("button", { name: "Dejar de organizar esta carpeta" });
+    expect(removeButton.className).not.toContain("bg-primary");
+  });
+
+  it("remove action remains present, accessible, and keyboard reachable", async () => {
+    mockOneRoot();
+    renderScreen();
+    await screen.findByText("C:/Descargas");
+    const removeButton = screen.getByRole("button", { name: "Dejar de organizar esta carpeta" });
+    expect(removeButton).toBeInTheDocument();
+    expect(removeButton.tagName).toBe("BUTTON");
+  });
+
+  it("remove click still invokes the exact same mutation with the exact root id", async () => {
+    mockOneRoot();
+    renderScreen();
+    await screen.findByText("C:/Descargas");
+    await userEvent.click(screen.getByRole("button", { name: "Dejar de organizar esta carpeta" }));
+
+    await waitFor(() => {
+      const removeCall = vi
+        .mocked(invoke)
+        .mock.calls.find(
+          ([, args]) => (args as { command?: string })?.command === "managed_roots.remove",
+        );
+      expect(removeCall).toBeDefined();
+      expect((removeCall?.[1] as { params: { managedRootId: string } }).params.managedRootId).toBe(
+        "root-1",
+      );
+    });
+  });
+
+  it("remove pending state disables the control against duplicate interaction", async () => {
+    let resolveRemove!: (value: unknown) => void;
+    const removePromise = new Promise((resolve) => {
+      resolveRemove = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "managed_roots.list") {
+        return {
+          outcome: "ok",
+          result: { roots: [{ id: "root-1", displayPath: "C:/Descargas", status: "available" }] },
+        };
+      }
+      if (command === "managed_roots.remove") return removePromise;
+      return { outcome: "ok", result: {} };
+    });
+    renderScreen();
+    await screen.findByText("C:/Descargas");
+    const removeButton = screen.getByRole("button", { name: "Dejar de organizar esta carpeta" });
+    await userEvent.click(removeButton);
+    expect(removeButton).toBeDisabled();
+    resolveRemove({ outcome: "ok", result: { managedRootId: "root-1", status: "succeeded", message: null } });
   });
 });

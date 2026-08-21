@@ -110,6 +110,58 @@ const PLAN_RESULT_WITH_ATTENTIONS = {
   },
 };
 
+// FA-017.6 Remediation 2: a dedicated 2-selectable-READY-item fixture,
+// separate from the shared 1-ready/1-review-required PLAN_RESULT above, so
+// the held-pending regression test below can select 2 items and prove the
+// submitted count survives independently of `selected` (which clears to 0
+// on submit).
+const ANALYSIS_RESULT_TWO_READY = {
+  outcome: "ok",
+  result: {
+    ...ANALYSIS_RESULT.result,
+    items: [
+      { fileId: "f1", filename: "invoice.pdf", policyDecisionId: "pd-ready-1" },
+      { fileId: "f2", filename: "receipt.pdf", policyDecisionId: "pd-ready-2" },
+    ],
+  },
+};
+
+const PLAN_RESULT_TWO_READY = {
+  outcome: "ok",
+  result: {
+    ...PLAN_RESULT.result,
+    summary: { ...PLAN_RESULT.result.summary, ready: 2, reviewRequired: 0 },
+    items: [
+      {
+        actionId: "pd-ready-1",
+        filename: "invoice.pdf",
+        sourceDisplayPath: "C:/Descargas/invoice.pdf",
+        destinationDisplayPath: "C:/Descargas/Documents/invoice.pdf",
+        categoryLabel: "Documento",
+        status: "ready",
+        title: "Listo para organizar",
+        detail: "Este archivo está listo para organizarse.",
+        severity: "info",
+        selectable: true,
+        needsReviewAction: false,
+      },
+      {
+        actionId: "pd-ready-2",
+        filename: "receipt.pdf",
+        sourceDisplayPath: "C:/Descargas/receipt.pdf",
+        destinationDisplayPath: "C:/Descargas/Documents/receipt.pdf",
+        categoryLabel: "Documento",
+        status: "ready",
+        title: "Listo para organizar",
+        detail: "Este archivo está listo para organizarse.",
+        severity: "info",
+        selectable: true,
+        needsReviewAction: false,
+      },
+    ],
+  },
+};
+
 function destinationSetupResult(
   items: { destinationCategory: string; destinationLabel: string; status: string }[],
 ) {
@@ -426,7 +478,7 @@ describe("PlanScreen -- destination setup", () => {
     });
     renderWithAttentions();
     await userEvent.click(await screen.findByRole("button", { name: "Preparar 2 carpetas" }));
-    await screen.findByText("Este plan ya no está actualizado.");
+    await screen.findByText("Las carpetas están listas.");
 
     // Multiple "Analizar de nuevo" buttons exist right after prepare
     // completes (the top invalidated-plan banner plus each per-category
@@ -614,5 +666,305 @@ describe("PlanScreen -- CTA hierarchy (FA-017.4)", () => {
     const historyButton = await screen.findByRole("button", { name: "Ver historial" });
     await userEvent.click(historyButton);
     expect(onViewHistory).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PlanScreen -- compact context bar / sticky footer (FA-017.6)", () => {
+  beforeEach(() => {
+    vi.mocked(invoke).mockReset();
+    mockInvokeByCommand();
+  });
+  afterEach(() => vi.clearAllMocks());
+
+  it("shows the compact context bar with root name and READY count once the plan resolves", async () => {
+    renderScreen();
+    expect(await screen.findByText("C:/Descargas · 1 listo")).toBeInTheDocument();
+  });
+
+  it("compact context bar includes attention count when attentions exist (MIXED)", async () => {
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTIONS;
+      return { outcome: "ok", result: {} };
+    });
+    renderScreen();
+    expect(
+      await screen.findByText("C:/Descargas · 1 listo · 2 necesitan atención"),
+    ).toBeInTheDocument();
+  });
+
+  it("compact context bar renders exactly once", async () => {
+    renderScreen();
+    await screen.findByText("invoice.pdf");
+    expect(screen.getAllByText(/· \d+ listo/)).toHaveLength(1);
+  });
+
+  it("compact context bar element appears after the select-all row and before the file list in DOM order", async () => {
+    renderScreen();
+    await screen.findByText("invoice.pdf");
+    const contextBar = screen.getByText("C:/Descargas · 1 listo");
+    const selectAll = screen.getByRole("checkbox", { name: "Seleccionar todos los listos" });
+    const fileList = screen.getByLabelText("Archivos analizados");
+    // DOM order: selectAll before contextBar before fileList.
+    expect(
+      selectAll.compareDocumentPosition(contextBar.parentElement as Node) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      (contextBar.parentElement as Node).compareDocumentPosition(fileList) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("compact context bar carries the sticky top-0 classes", async () => {
+    renderScreen();
+    await screen.findByText("invoice.pdf");
+    const bar = screen.getByText("C:/Descargas · 1 listo").parentElement as HTMLElement;
+    expect(bar.className).toContain("sticky");
+    expect(bar.className).toContain("top-0");
+  });
+
+  it("does not render the context bar before plan facts exist (initial loading)", async () => {
+    let resolvePlan!: (value: unknown) => void;
+    const planPromise = new Promise((resolve) => {
+      resolvePlan = resolve;
+    });
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") return planPromise;
+      return { outcome: "ok", result: {} };
+    });
+    renderScreen();
+    await screen.findByText(/archivos encontrados/);
+    expect(screen.queryByText(/· \d+ listo/)).not.toBeInTheDocument();
+    resolvePlan(PLAN_RESULT);
+    expect(await screen.findByText("C:/Descargas · 1 listo")).toBeInTheDocument();
+  });
+
+  it("selected === 0: no sticky footer, no Organize button anywhere", async () => {
+    renderScreen();
+    await screen.findByText("invoice.pdf");
+    expect(screen.queryByRole("button", { name: /^Organizar/ })).not.toBeInTheDocument();
+  });
+
+  it("selected > 0: exactly one Organizar control exists, inside the sticky footer, with compact copy", async () => {
+    renderScreen();
+    await screen.findByText("invoice.pdf");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" }));
+
+    const buttons = screen.getAllByRole("button", { name: /^Organizar/ });
+    expect(buttons).toHaveLength(1);
+    expect(screen.getByText("1 seleccionado · 0 se eliminarán")).toBeInTheDocument();
+    // The full, non-sticky safety sentence is also present, text-only.
+    expect(
+      screen.getByText(/1 archivo se moverá · 0 archivos se eliminarán · Puedes deshacer los cambios/),
+    ).toBeInTheDocument();
+
+    const footer = buttons[0].closest("div");
+    expect(footer?.className).toContain("sticky");
+    expect(footer?.className).toContain("bottom-0");
+  });
+
+  // FA-017.6 Remediation 2 -- THE PRECISE BUG: a held (never synchronously
+  // resolved) apply.items promise is required here -- if the mock resolved
+  // immediately, `applyItems.isPending` could already be false by the time
+  // of these assertions, and the test would pass whether or not the footer
+  // regression existed. This is the regression test the adversarial review
+  // asked for, extended to 2 selected READY items to prove the pending
+  // count comes from the submitted request, not from `selected`.
+  it("held-pending apply.items: sticky footer stays mounted, shows the submitted count, disabled 'Organizando…', exactly one control -- then resolves normally", async () => {
+    let resolveApply!: (value: unknown) => void;
+    const applyPromise = new Promise((resolve) => {
+      resolveApply = resolve;
+    });
+    let applyCallArgs: unknown;
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "analysis.run") return ANALYSIS_RESULT_TWO_READY;
+      if (command === "plan.create") return PLAN_RESULT_TWO_READY;
+      if (command === "apply.items") {
+        applyCallArgs = args;
+        return applyPromise;
+      }
+      return { outcome: "ok", result: {} };
+    });
+    const onApplyCompleted = vi.fn();
+    renderScreen(onApplyCompleted);
+    await screen.findByText("invoice.pdf");
+    await userEvent.click(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Seleccionar receipt.pdf" }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Organizar 2 archivos" }));
+
+    // Selection is no longer authorized for resubmission: `selected`
+    // cleared synchronously on submit -- both checkboxes are back to
+    // unchecked (unchanged double-submit safety) -- yet the sticky footer
+    // is still mounted.
+    expect(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    expect(screen.getByRole("checkbox", { name: "Seleccionar receipt.pdf" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    const pendingButtons = screen.getAllByRole("button", { name: "Organizando…" });
+    expect(pendingButtons).toHaveLength(1);
+    expect(pendingButtons[0]).toBeDisabled();
+    expect(screen.getByText("2 seleccionados · 0 se eliminarán")).toBeInTheDocument();
+    // Never two controls for the one action -- no stale "Organizar N
+    // archivos" button coexists with the busy one.
+    expect(screen.queryByRole("button", { name: /^Organizar \d/ })).not.toBeInTheDocument();
+
+    // The mutation received exactly the 2 ids that were selected pre-submit.
+    expect(
+      (applyCallArgs as { params: { policyDecisionIds: string[] } }).params.policyDecisionIds,
+    ).toEqual(["pd-ready-1", "pd-ready-2"]);
+
+    resolveApply({
+      outcome: "ok",
+      result: {
+        outcome: "ok",
+        batchId: "batch-1",
+        status: "completed",
+        startedAt: "2026-01-01T00:00:00Z",
+        completedAt: "2026-01-01T00:00:01Z",
+        managedRootId: "root-1",
+        items: [],
+        summary: { selected: 2, processed: 2, applied: 2, notApplied: 0, skipped: 0, invalid: 0 },
+        summaryMessage: {
+          title: "2 archivos se organizaron correctamente.",
+          detail: "Todos los archivos seleccionados se movieron a su carpeta.",
+          severity: "info",
+          suggestedAction: "none",
+        },
+      },
+    });
+
+    // Terminal known success: existing result/navigation handoff fires
+    // exactly as before this remediation, and the footer does not linger.
+    await waitFor(() => {
+      expect(onApplyCompleted).toHaveBeenCalledWith(
+        "root-1",
+        expect.objectContaining({ outcome: "ok" }),
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /^Organiz/ })).not.toBeInTheDocument();
+    });
+    // No selection is ever restored after a pending apply settles.
+    expect(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" })).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+  });
+
+  it("selected > 0, idle (not pending): footer visible with exactly one 'Organizar N archivo(s)' button", async () => {
+    renderScreen();
+    await screen.findByText("invoice.pdf");
+    expect(screen.queryByRole("button", { name: /^Organiz/ })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("checkbox", { name: "Seleccionar invoice.pdf" }));
+
+    expect(screen.getAllByRole("button", { name: "Organizar 1 archivo" })).toHaveLength(1);
+  });
+
+  it("PLAN_STALE: no sticky Organize footer, no numeric counts in the context bar", async () => {
+    let analysisCallCount = 0;
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "analysis.run") {
+        analysisCallCount += 1;
+        return ANALYSIS_RESULT;
+      }
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTIONS;
+      if (command === "destination_setup.prepare") {
+        return destinationSetupResult([
+          { destinationCategory: "documents", destinationLabel: "Documents", status: "prepared" },
+          { destinationCategory: "images", destinationLabel: "Images", status: "prepared" },
+        ]);
+      }
+      return { outcome: "ok", result: {} };
+    });
+    renderScreen();
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar 2 carpetas" }));
+    await screen.findByText("Las carpetas están listas.");
+
+    expect(screen.getByText("Analiza de nuevo para actualizar esta vista")).toBeInTheDocument();
+    expect(screen.queryByText(/· \d+ listo/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Organizar/ })).not.toBeInTheDocument();
+    expect(analysisCallCount).toBe(1);
+  });
+
+  it("reanalyzing: context bar shows the busy label, no numeric counts", async () => {
+    let resolveSecondAnalysis!: (value: unknown) => void;
+    const secondAnalysisPromise = new Promise((resolve) => {
+      resolveSecondAnalysis = resolve;
+    });
+    let analysisCallCount = 0;
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "analysis.run") {
+        analysisCallCount += 1;
+        return analysisCallCount === 1 ? ANALYSIS_RESULT : secondAnalysisPromise;
+      }
+      if (command === "plan.create") return PLAN_RESULT_WITH_ATTENTIONS;
+      if (command === "destination_setup.prepare") {
+        return destinationSetupResult([
+          { destinationCategory: "documents", destinationLabel: "Documents", status: "prepared" },
+          { destinationCategory: "images", destinationLabel: "Images", status: "prepared" },
+        ]);
+      }
+      return { outcome: "ok", result: {} };
+    });
+    renderScreen();
+    await userEvent.click(await screen.findByRole("button", { name: "Preparar 2 carpetas" }));
+    await screen.findByText("Las carpetas están listas.");
+    const reanalyzeButtons = screen.getAllByRole("button", { name: "Analizar de nuevo" });
+    await userEvent.click(reanalyzeButtons[0]);
+
+    expect(await screen.findByText("Analizando de nuevo…")).toBeInTheDocument();
+    expect(screen.queryByText(/· \d+ listo/)).not.toBeInTheDocument();
+
+    resolveSecondAnalysis(ANALYSIS_RESULT);
+  });
+
+  it("NOTHING_ACTIONABLE: no context bar and no sticky footer (early-return EmptyState)", async () => {
+    vi.mocked(invoke).mockImplementation(async (_cmd, args) => {
+      const command = (args as { command?: string })?.command;
+      if (command === "analysis.run") return ANALYSIS_RESULT;
+      if (command === "plan.create") {
+        return {
+          outcome: "ok",
+          result: {
+            ...PLAN_RESULT.result,
+            attentions: [],
+            summary: { ...PLAN_RESULT.result.summary, ready: 0, reviewRequired: 0 },
+            items: [
+              {
+                actionId: "pd-skip-1",
+                filename: "old.tmp",
+                sourceDisplayPath: "C:/Descargas/old.tmp",
+                destinationDisplayPath: null,
+                categoryLabel: "Otro",
+                status: "skipped",
+                title: "Ya estaba organizado",
+                detail: "No requiere ninguna acción.",
+                severity: "info",
+                selectable: false,
+                needsReviewAction: false,
+              },
+            ],
+          },
+        };
+      }
+      return { outcome: "ok", result: {} };
+    });
+    renderScreen();
+    expect(await screen.findByText("No hay nada que organizar en este momento.")).toBeInTheDocument();
+    expect(screen.queryByText(/· \d+ listo/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Organizar/ })).not.toBeInTheDocument();
   });
 });

@@ -58,7 +58,7 @@ describe("FA-017.4 deterministic partial apply result", () => {
     // This spec runs in the same shared, persistent app-data root as
     // golden-path.spec.ts within one wdio run (see wdio.conf.ts's single
     // FILE_AGENT_DESKTOP_APP_DATA_ROOT) -- the Roots screen renders
-    // "Elegir una carpeta" only while the roots list is empty, and
+    // "Elegir carpeta" only while the roots list is empty, and
     // "Agregar carpeta" once at least one root already exists. Poll for
     // whichever add-root affordance appears first rather than checking
     // once, so this spec is correct regardless of run order or load
@@ -66,12 +66,12 @@ describe("FA-017.4 deterministic partial apply result", () => {
     await browser.waitUntil(
       async () =>
         (await browser.$("button=Agregar carpeta").then((el) => el.isExisting())) ||
-        (await browser.$("button=Elegir una carpeta").then((el) => el.isExisting())),
+        (await browser.$("button=Elegir carpeta").then((el) => el.isExisting())),
       { timeout: 20000, timeoutMsg: "neither add-root affordance appeared" },
     );
     const addRootButton = (await browser.$("button=Agregar carpeta").then((el) => el.isExisting()))
       ? await browser.$("button=Agregar carpeta")
-      : await browser.$("button=Elegir una carpeta");
+      : await browser.$("button=Elegir carpeta");
     await addRootButton.click();
 
     // This spec's root is not necessarily the only one in the shared

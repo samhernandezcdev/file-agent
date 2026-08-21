@@ -37,7 +37,7 @@ describe("FA-017.5 History -> detail -> Undo", () => {
 
     // This spec may run in the same shared, persistent app-data root as
     // other spec files within one wdio run -- the Roots screen renders
-    // "Elegir una carpeta" only while the roots list is empty, and
+    // "Elegir carpeta" only while the roots list is empty, and
     // "Agregar carpeta" once at least one root already exists, and
     // briefly renders neither while managed_roots.list is still loading.
     const managedRootsHeading = await browser.$("#managed-roots-heading");
@@ -45,12 +45,12 @@ describe("FA-017.5 History -> detail -> Undo", () => {
     await browser.waitUntil(
       async () =>
         (await browser.$("button=Agregar carpeta").then((el) => el.isExisting())) ||
-        (await browser.$("button=Elegir una carpeta").then((el) => el.isExisting())),
+        (await browser.$("button=Elegir carpeta").then((el) => el.isExisting())),
       { timeout: 20000, timeoutMsg: "neither add-root affordance appeared" },
     );
     const addRootButton = (await browser.$("button=Agregar carpeta").then((el) => el.isExisting()))
       ? await browser.$("button=Agregar carpeta")
-      : await browser.$("button=Elegir una carpeta");
+      : await browser.$("button=Elegir carpeta");
     await addRootButton.click();
 
     const fixtureFolderName = fixtureRoot.split(/[\\/]/).pop()!;

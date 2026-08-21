@@ -17,7 +17,7 @@ export function EmptyState({
     <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-12 text-center">
       <Icon size={32} className="text-foreground-subtle" aria-hidden="true" />
       <p className="text-base font-semibold text-foreground">{title}</p>
-      {detail ? <div className="max-w-sm text-sm text-foreground-muted">{detail}</div> : null}
+      {detail ? <div className="max-w-md text-sm text-foreground-muted">{detail}</div> : null}
       {action}
     </div>
   );

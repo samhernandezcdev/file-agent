@@ -65,7 +65,7 @@ describe("FA-017 golden path", () => {
         path;
     }, fixtureRoot);
 
-    const addButton = await browser.$("button=Elegir una carpeta");
+    const addButton = await browser.$("button=Elegir carpeta");
     await addButton.click();
 
     // Match on the "Analizar" action appearing rather than the exact
