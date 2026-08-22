@@ -103,6 +103,61 @@ class FileAgentStore:
         finally:
             session.close()
 
+    def record_analyzed_file(
+        self,
+        hash_outcome: HashSuccess,
+        classification_event: DomainEvent,
+        proposal_event: DomainEvent,
+        policy_decision_event: DomainEvent,
+    ) -> None:
+        """Atomically persists the four durable facts produced by
+        successfully analyzing one file -- the hashed-observation update
+        plus FILE_HASHED, FILE_CLASSIFIED, PROPOSAL_CREATED, and the
+        policy-decision event -- in exactly ONE transaction (FA-017.7B:
+        one successfully analyzed file == one commit, replacing what were
+        four separate commits: record_hash_success + 3x record_event).
+
+        Same fail-closed integrity check as record_hash_success (the
+        observation row must already exist -- record_scan must run
+        first), same duplicate-event handling as record_event, applied in
+        existing event order. Additive only: record_hash_success and
+        record_event are unchanged and remain independently used by every
+        other caller (review, apply, undo, history, root registration,
+        destination setup) -- this method exists solely for the analyze
+        pipeline's own successful per-file path."""
+        session = self._session_factory()
+        sha256 = hash_outcome.hashed.sha256
+        assert sha256 is not None, "HashSuccess.hashed always carries a computed sha256"
+        try:
+            with session.begin():
+                rowcount = repositories.update_observation_hash(
+                    session, id=hash_outcome.hashed.id, sha256=sha256
+                )
+                if rowcount == 0:
+                    raise IntegrityConstraintError(
+                        f"no persisted observation with id={hash_outcome.hashed.id}; "
+                        "record_scan must run before record_analyzed_file"
+                    )
+                for event in (
+                    hash_outcome.event,
+                    classification_event,
+                    proposal_event,
+                    policy_decision_event,
+                ):
+                    event_outcome = repositories.insert_event(
+                        session, mapping.event_to_row(event)
+                    )
+                    if event_outcome is EventInsertOutcome.DUPLICATE_CONFLICTING:
+                        raise IntegrityConstraintError(
+                            f"event id={event.id} already exists with different content"
+                        )
+        except IntegrityError as exc:
+            raise IntegrityConstraintError(str(exc)) from exc
+        except OperationalError as exc:
+            raise DatabaseUnavailableError(str(exc)) from exc
+        finally:
+            session.close()
+
     def record_event(self, event: DomainEvent) -> bool:
         """Duplicate-aware append of a standalone event. True if newly inserted,
         False if an identical event with this id already existed. Raises

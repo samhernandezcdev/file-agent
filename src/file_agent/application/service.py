@@ -515,10 +515,20 @@ class FileAgentApplicationService:
         ).run()
         self._store.record_scan(scan_result)
 
+        # FA-017.7B.3: one fresh, scan-scoped ancestor-fact cache for this
+        # invocation only -- never stored on self, never shared with a
+        # later analyze_managed_root/analyze_file call (each constructs
+        # its own). Eliminates the redundant os.scandir/classify_directory
+        # work every one of scan_result.files would otherwise repeat
+        # against whatever ancestor directories they share.
+        structural_context = structural_safety.ScanStructuralContext(sandbox_root.path)
+
         items: list[AnalyzedItem] = []
         failures: list[AnalysisFailure] = []
         for discovered in scan_result.files:
-            outcome = self._analyze_discovered(discovered, sandbox_root)
+            outcome = self._analyze_discovered(
+                discovered, sandbox_root, structural_context
+            )
             if isinstance(outcome, AnalysisFailure):
                 failures.append(outcome)
             else:
@@ -558,6 +568,15 @@ class FileAgentApplicationService:
             )
         sandbox_root = root_outcome
 
+        # FA-017.7B.3: a fresh, single-invocation context -- analyze_file
+        # analyzes exactly one file, so there is no meaningful performance
+        # gain here, but a context is still constructed (rather than
+        # calling find_structural_protection directly) to keep this
+        # method's structural-safety semantics identical to
+        # analyze_managed_root's, and to guarantee it is never, even
+        # accidentally, shared with a prior/later invocation.
+        structural_context = structural_safety.ScanStructuralContext(sandbox_root.path)
+
         # FA-016: structural safety checked BEFORE the re-stat below --
         # re-stat only reports whether *something* currently exists at this
         # path, which is a strictly weaker question than "is this path
@@ -566,8 +585,8 @@ class FileAgentApplicationService:
         # location that happens to have nothing at the equivalent leaf path
         # would otherwise surface as a misleading "not_found" here, never
         # reaching the structural check inside _analyze_discovered at all.
-        structural_outcome = structural_safety.find_structural_protection(
-            discovered.path, sandbox_root.path, inspect_candidate_reference=True
+        structural_outcome = structural_context.check_candidate(
+            discovered.path, inspect_candidate_reference=True
         )
         if structural_outcome is not None:
             return AnalysisFailure(
@@ -595,10 +614,13 @@ class FileAgentApplicationService:
                 "modified_at": datetime.fromtimestamp(st.st_mtime, tz=UTC),
             }
         )
-        return self._analyze_discovered(fresh, sandbox_root)
+        return self._analyze_discovered(fresh, sandbox_root, structural_context)
 
     def _analyze_discovered(
-        self, discovered: DiscoveredFile, sandbox_root: SandboxRoot
+        self,
+        discovered: DiscoveredFile,
+        sandbox_root: SandboxRoot,
+        structural_context: "structural_safety.ScanStructuralContext",
     ) -> AnalyzedItem | AnalysisFailure:
         # FA-016: structural safety runs before classification -- the ONE
         # gate closing both "newly protected" and "historical/pre-FA-016
@@ -609,9 +631,13 @@ class FileAgentApplicationService:
         # is an EXISTING source object, so the candidate itself -- not just
         # its ancestors -- must be conclusively proven not to have been
         # individually replaced by a symlink/junction/reparse object since
-        # discovery.
-        structural_outcome = structural_safety.find_structural_protection(
-            discovered.path, sandbox_root.path, inspect_candidate_reference=True
+        # discovery. FA-017.7B.3: `structural_context` is this call's own
+        # invocation-scoped cache (constructed once by the caller,
+        # analyze_managed_root or analyze_file) -- the candidate leaf
+        # itself is still always re-derived fresh (see ScanStructuralContext's
+        # own docstring); only shared-ancestor facts may be reused.
+        structural_outcome = structural_context.check_candidate(
+            discovered.path, inspect_candidate_reference=True
         )
         if structural_outcome is not None:
             return AnalysisFailure(
@@ -627,16 +653,22 @@ class FileAgentApplicationService:
                 path=discovered.path,
                 reason_code=hash_outcome.issue.issue_type.value,
             )
-        self._store.record_hash_success(hash_outcome)
 
         classification = FileClassifier(clock=self._clock).classify(hash_outcome.hashed)
-        self._store.record_event(classification_event(classification))
-
         proposal = ProposalEngine(clock=self._clock).propose(classification)
-        self._store.record_event(proposal_event(proposal))
-
         policy_decision = PolicyEngine(clock=self._clock).evaluate(proposal)
-        self._store.record_event(policy_decision_event(policy_decision))
+
+        # FA-017.7B: all four successful-analysis facts are built in memory
+        # first (order unchanged: hash -> classify -> propose -> evaluate),
+        # then persisted together in exactly one transaction -- replacing
+        # what were four separate commits (record_hash_success + 3x
+        # record_event) with one call to record_analyzed_file.
+        self._store.record_analyzed_file(
+            hash_outcome,
+            classification_event(classification),
+            proposal_event(proposal),
+            policy_decision_event(policy_decision),
+        )
 
         return AnalyzedItem(
             file_id=discovered.id,

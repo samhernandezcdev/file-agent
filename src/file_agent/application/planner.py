@@ -206,6 +206,16 @@ def build_organization_plan(
         )
     sandbox_root = root_outcome
 
+    # FA-017.7B.3: one fresh, plan-scoped ancestor-fact cache for this
+    # invocation only -- never shared with the analyze_managed_root
+    # context that produced these policy_decision_ids (that context, if
+    # one existed, is long gone by the time plan.create runs as its own,
+    # separate, later IPC call), and never shared with a later
+    # build_organization_plan call either. Eliminates the same redundant
+    # os.scandir/classify_directory work Phase 3.5's loop below would
+    # otherwise repeat for every selected item that shares an ancestor.
+    structural_context = structural_safety.ScanStructuralContext(sandbox_root.path)
+
     # Phase 3.5 (FA-016): source-side live structural check, re-derived
     # fresh against the now-validated sandbox_root -- never assumed from
     # analysis time. A structurally protected source never reaches Phase
@@ -213,9 +223,8 @@ def build_organization_plan(
     # would be irrelevant work for an item that can never become READY).
     protected_items: dict[UUID, OrganizationPlanItem] = {}
     for policy_decision_id, context in resolved_by_id.items():
-        source_outcome = structural_safety.find_structural_protection(
+        source_outcome = structural_context.check_candidate(
             context.discovered.path,
-            sandbox_root.path,
             inspect_candidate_reference=True,
         )
         if source_outcome is not None:
@@ -227,7 +236,9 @@ def build_organization_plan(
     items = [
         protected_items[policy_decision_id]
         if policy_decision_id in protected_items
-        else _finish_item(store, sandbox_root, resolved_by_id[policy_decision_id])
+        else _finish_item(
+            store, sandbox_root, resolved_by_id[policy_decision_id], structural_context
+        )
         for policy_decision_id in frozen
         if policy_decision_id in resolved_by_id
     ]
@@ -355,7 +366,10 @@ def _structural_protection_item(
 
 
 def _finish_item(
-    store: FileAgentStore, sandbox_root: SandboxRoot, context: "_ResolvedContext"
+    store: FileAgentStore,
+    sandbox_root: SandboxRoot,
+    context: "_ResolvedContext",
+    structural_context: "structural_safety.ScanStructuralContext",
 ) -> OrganizationPlanItem:
     """Phase 4 for one resolved context: everything build_organization_plan
     used to do after confirming `discovered is not None`, unchanged in
@@ -420,8 +434,8 @@ def _finish_item(
     # would wrongly imply human approval could make it safe.
     # inspect_candidate_reference=False: destination_path normally does not
     # exist yet; only its ancestor chain is inspected.
-    destination_outcome = structural_safety.find_structural_protection(
-        destination_path, sandbox_root.path, inspect_candidate_reference=False
+    destination_outcome = structural_context.check_candidate(
+        destination_path, inspect_candidate_reference=False
     )
     if destination_outcome is not None:
         return _structural_protection_item(

@@ -227,15 +227,38 @@ def classify_directory(
 # --- Reference/reparse-point inspection (fail-closed) -----------------------
 
 
-class _ReferenceState(Enum):
-    NORMAL = "normal"
-    REPARSE_POINT = "reparse_point"
+@dataclass(frozen=True, slots=True)
+class _StatIdentity:
+    """(st_dev, st_ino, st_mtime) from one stat call -- bundled together
+    (not three separate Optional fields) so a single `is None` check
+    narrows all three at once for callers, since they are only ever
+    known or unknown together."""
+
+    st_dev: int
+    st_ino: int
+    mtime: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ReferenceInspection:
+    """Fail-closed reference/reparse inspection, enriched with the
+    identity+mtime observed by the SAME stat call -- used by
+    ScanStructuralContext (below) to detect ancestor replacement, rename,
+    or content change (e.g. a marker file added/removed) without any
+    extra syscalls beyond what this inspection already required for its
+    own, unrelated, always-fresh reparse-point purpose. `stat_identity`
+    is None exactly when the path does not currently exist, mirroring the
+    FileNotFoundError -> conclusively-not-a-reparse-point precedent
+    documented below."""
+
+    is_reparse: bool
+    stat_identity: _StatIdentity | None
 
 
 def _inspect_reference_state(
     path: Path,
-) -> "_ReferenceState | StructuralInspectionFailure":
-    """Three-way, fail-closed reference inspection. NEVER silently coerces
+) -> "_ReferenceInspection | StructuralInspectionFailure":
+    """Fail-closed reference inspection. NEVER silently coerces
     a genuine inspection failure into "not a reparse point": the ENTIRE
     sequence below -- not just the final os.stat fallback -- is wrapped in
     one try/except, so a failure from ANY of the three underlying stdlib
@@ -262,19 +285,23 @@ def _inspect_reference_state(
     remains a genuine, fail-closed StructuralInspectionFailure."""
     try:
         if path.is_symlink():
-            return _ReferenceState.REPARSE_POINT
+            return _ReferenceInspection(is_reparse=True, stat_identity=None)
         if os.path.isjunction(path):
-            return _ReferenceState.REPARSE_POINT
+            return _ReferenceInspection(is_reparse=True, stat_identity=None)
         st = os.stat(path, follow_symlinks=False)
     except FileNotFoundError:
-        return _ReferenceState.NORMAL
+        return _ReferenceInspection(is_reparse=False, stat_identity=None)
     except OSError as exc:
         return StructuralInspectionFailure(
             path, f"could not determine reference status: {exc}"
         )
-    if st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT:
-        return _ReferenceState.REPARSE_POINT
-    return _ReferenceState.NORMAL
+    is_reparse = bool(st.st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    return _ReferenceInspection(
+        is_reparse=is_reparse,
+        stat_identity=_StatIdentity(
+            st_dev=st.st_dev, st_ino=st.st_ino, mtime=st.st_mtime
+        ),
+    )
 
 
 # --- The shared, live-reinspecting primitive --------------------------------
@@ -309,10 +336,10 @@ def find_structural_protection(
         )
 
     if inspect_candidate_reference:
-        leaf_state = _inspect_reference_state(candidate_path)
-        if isinstance(leaf_state, StructuralInspectionFailure):
-            return leaf_state
-        if leaf_state is _ReferenceState.REPARSE_POINT:
+        leaf_inspection = _inspect_reference_state(candidate_path)
+        if isinstance(leaf_inspection, StructuralInspectionFailure):
+            return leaf_inspection
+        if leaf_inspection.is_reparse:
             return StructuralInspectionFailure(
                 candidate_path,
                 "candidate itself is a symlink, junction, or reparse point",
@@ -320,10 +347,10 @@ def find_structural_protection(
 
     ancestors = [p for p in candidate_path.parents if p.is_relative_to(root_path)]
     for ancestor in ancestors:
-        reference_state = _inspect_reference_state(ancestor)
-        if isinstance(reference_state, StructuralInspectionFailure):
-            return reference_state
-        if reference_state is _ReferenceState.REPARSE_POINT:
+        reference_inspection = _inspect_reference_state(ancestor)
+        if isinstance(reference_inspection, StructuralInspectionFailure):
+            return reference_inspection
+        if reference_inspection.is_reparse:
             return StructuralInspectionFailure(
                 ancestor, "ancestor is a symlink, junction, or reparse point"
             )
@@ -355,6 +382,172 @@ def find_structural_protection(
             return membership
 
     return None
+
+
+# --- Scan-scoped ancestor-fact reuse (FA-017.7B.3) --------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _CachedAncestorFact:
+    """A shared ancestor's classification, plus the two cheap fields
+    (besides identity itself) needed to detect it having become stale
+    without re-doing the expensive os.scandir/classify_directory work:
+    `name` (renamed into/out of a hard-exclusion match) and `mtime` (a
+    marker file added/removed -- NTFS updates a directory's own mtime
+    when its immediate children change). `fact` is None for "clear, not
+    protected" -- the same vocabulary find_structural_protection's own
+    ancestor loop already uses (None = keep checking/eligible)."""
+
+    name: str
+    mtime: float
+    fact: StructuralProtection | None
+
+
+class ScanStructuralContext:
+    """A scan-scoped (ONE analyze_managed_root / analyze_file /
+    build_organization_plan invocation, never longer) cache of shared-
+    ANCESTOR structural facts -- eliminating the redundant os.scandir +
+    classify_directory work find_structural_protection would otherwise
+    repeat, unchanged, for every candidate that shares an ancestor (the
+    common case: many files under one flat or lightly-nested folder).
+
+    SCAN-SCOPED STRUCTURAL REUSE != EXECUTION AUTHORIZATION: this class
+    has no method that returns anything other than exactly what
+    find_structural_protection itself already returns
+    (StructuralProtection | StructuralInspectionFailure | None) --
+    consumed identically by every existing caller. It is never
+    serialized, never persisted, never stored on
+    FileAgentApplicationService.self, never threaded into Apply/Undo/
+    Restore/destination-setup, and never shared between two separate
+    invocations (each of those constructs its own, fresh instance -- see
+    application/service.py::analyze_managed_root/analyze_file and
+    application/planner.py::build_organization_plan).
+
+    SHARED-ANCESTOR REUSE != SOURCE-LEAF REUSE: the candidate leaf's own
+    reference/reparse state (`inspect_candidate_reference=True`) is
+    ALWAYS re-derived fresh, on every single call, via the exact same
+    _inspect_reference_state call find_structural_protection itself would
+    make -- never cached, never inferred from any ancestor fact.
+
+    Fail-closed, by construction: a StructuralInspectionFailure for an
+    ancestor is returned directly and NEVER cached as a reusable fact
+    (Part 7) -- the next candidate under that same ancestor re-attempts
+    the full inspection fresh. An ancestor that currently cannot be
+    conclusively proven to exist with a stable identity (FileNotFoundError
+    from either the identity stat or the subsequent os.scandir) is never
+    cached either -- only a conclusively-existing, successfully-
+    classified ancestor becomes a cache entry. A directory replaced
+    (new st_dev/st_ino), renamed (new name), or whose own contents
+    changed (new mtime -- e.g. a marker file appearing) after being
+    cached is detected on the very next candidate that touches it and
+    forces a full, fresh re-derivation -- the cached entry is never
+    trusted once any of these three cheap, already-available fields
+    disagrees with what a fresh stat just observed. A directory turned
+    into a symlink/junction/reparse point is caught unconditionally,
+    every time, for every candidate, regardless of cache state, because
+    that check is never part of the cached fact in the first place --
+    _inspect_reference_state's own reparse detection runs fresh on every
+    call, exactly as find_structural_protection already does today.
+    """
+
+    def __init__(self, root_path: Path) -> None:
+        self._root_path = root_path
+        self._ancestor_facts: dict[tuple[int, int], _CachedAncestorFact] = {}
+
+    def check_candidate(
+        self,
+        candidate_path: Path,
+        *,
+        inspect_candidate_reference: bool,
+    ) -> StructuralProtection | StructuralInspectionFailure | None:
+        """Drop-in equivalent of find_structural_protection(candidate_path,
+        self._root_path, inspect_candidate_reference=...) -- identical
+        return type and semantics, reusing shared-ancestor facts across
+        calls within this one context's lifetime wherever safe to do so."""
+        root_path = self._root_path
+        if candidate_path == root_path or not candidate_path.is_relative_to(root_path):
+            return StructuralInspectionFailure(
+                candidate_path, "candidate_path is not a strict descendant of root_path"
+            )
+
+        if inspect_candidate_reference:
+            leaf_inspection = _inspect_reference_state(candidate_path)
+            if isinstance(leaf_inspection, StructuralInspectionFailure):
+                return leaf_inspection
+            if leaf_inspection.is_reparse:
+                return StructuralInspectionFailure(
+                    candidate_path,
+                    "candidate itself is a symlink, junction, or reparse point",
+                )
+
+        ancestors = [p for p in candidate_path.parents if p.is_relative_to(root_path)]
+        for ancestor in ancestors:
+            fact_or_rejection = self._ancestor_fact(ancestor)
+            if fact_or_rejection is not None:
+                return fact_or_rejection
+
+        return None
+
+    def _ancestor_fact(
+        self, ancestor: Path
+    ) -> StructuralProtection | StructuralInspectionFailure | None:
+        """One ancestor's outcome -- None means "clear, keep checking the
+        next ancestor," mirroring find_structural_protection's own
+        per-ancestor loop body exactly. Reparse/inspection-failure/
+        missing-ancestor outcomes are always freshly re-derived and never
+        cached (see class docstring)."""
+        reference_inspection = _inspect_reference_state(ancestor)
+        if isinstance(reference_inspection, StructuralInspectionFailure):
+            return reference_inspection
+        if reference_inspection.is_reparse:
+            return StructuralInspectionFailure(
+                ancestor, "ancestor is a symlink, junction, or reparse point"
+            )
+        stat_identity = reference_inspection.stat_identity
+        if stat_identity is None:
+            # Does not currently exist -- never cached (nothing stable to
+            # key on), conclusively nothing to protect here, matching
+            # find_structural_protection's own FileNotFoundError handling
+            # around its os.scandir call below.
+            return None
+
+        key = (stat_identity.st_dev, stat_identity.st_ino)
+        cached = self._ancestor_facts.get(key)
+        if (
+            cached is not None
+            and cached.name == ancestor.name
+            and cached.mtime == stat_identity.mtime
+        ):
+            return cached.fact
+
+        if is_hard_excluded_directory_name(ancestor.name):
+            fact: StructuralProtection | None = StructuralProtection(
+                StructuralProtectionKind.HARD_EXCLUSION,
+                root_path=ancestor,
+                marker=None,
+                marker_path=None,
+                excluded_name=ancestor.name,
+            )
+            self._ancestor_facts[key] = _CachedAncestorFact(
+                name=ancestor.name, mtime=stat_identity.mtime, fact=fact
+            )
+            return fact
+
+        try:
+            entries = list(os.scandir(ancestor))
+        except FileNotFoundError:
+            # Existed a moment ago (the identity stat above just
+            # succeeded); gone now. A genuine, already-accepted TOCTOU
+            # gap (see this module's own docstring) -- never cached.
+            return None
+        except OSError as exc:
+            return StructuralInspectionFailure(ancestor, str(exc))
+
+        membership = classify_directory(ancestor, entries)
+        self._ancestor_facts[key] = _CachedAncestorFact(
+            name=ancestor.name, mtime=stat_identity.mtime, fact=membership
+        )
+        return membership
 
 
 # --- Leaf inspection (FA-017.2 destination-setup TOCTOU) --------------------
@@ -417,6 +610,7 @@ def inspect_leaf(path: Path) -> LeafState:
 __all__ = [
     "LeafState",
     "ProjectMarkerType",
+    "ScanStructuralContext",
     "StructuralInspectionFailure",
     "StructuralProtection",
     "StructuralProtectionKind",
